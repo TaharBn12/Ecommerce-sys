@@ -84,8 +84,9 @@ describe("findOrCreateCustomer", () => {
 });
 
 describe("createStoreOrder", () => {
-  it("commits a simple tracked order in one batch", async () => {
+  it("commits a simple tracked order in one batch (catalog price is authoritative)", async () => {
     const db = makeMockDb([
+      f({ price: 1500, track_inventory: 1 }), // catalog price row (server-authoritative)
       a([]),                             // selectApplicableOffer — no candidates
       f({ sku: "TS-001" }),              // product SKU select
       f({ track_inventory: 1 }),         // trackInventory select
@@ -100,16 +101,18 @@ describe("createStoreOrder", () => {
       deliveryFee: 400,
     });
 
+    // quantity 2 × catalog price 1500 — the client's pricePerUnit is ignored
     expect(result).toMatchObject({ price: 3000, deliveryFee: 400 });
     expect(result.orderNumber).toMatch(/^ORD-\d{8}-\d{4}$/);
     expect(result.id).toBeTruthy();
   });
 
-  it("commits a variant-selection order with grouped deductions", async () => {
+  it("commits a variant-selection order with grouped deductions (price = Σ lines)", async () => {
     const db = makeMockDb([
+      f({ price: 1500, track_inventory: 1 }), // catalog price row
       a([]),                             // offers
-      f({ sku: "TS-RED" }),              // variant SKU (group 1)
-      f({ sku: "TS-BLUE" }),             // variant SKU (group 2)
+      f({ sku: "TS-RED", price: 1500 }),  // variant row 1 (sku + price)
+      f({ sku: "TS-BLUE", price: 1500 }), // variant row 2
       f({ track_inventory: 1 }),         // trackInventory
       f({ inventory: 4 }),               // inventory variant 1
       f({ inventory: 2 }),               // inventory variant 2
@@ -127,11 +130,13 @@ describe("createStoreOrder", () => {
       deliveryFee: 400,
     });
 
-    expect(result).toMatchObject({ price: 3000 });
+    // 2 × 1500 + 1 × 1500 — the true sum of the lines, not quantity × unit
+    expect(result).toMatchObject({ price: 4500 });
   });
 
   it("skips deduction entirely for untracked products", async () => {
     const db = makeMockDb([
+      f({ price: 1500, track_inventory: 0 }), // catalog price row
       a([]),                             // offers
       f({ sku: "TS-001" }),              // SKU
       f({ track_inventory: 0 }),         // trackInventory — false
@@ -154,6 +159,7 @@ describe("createStoreOrder", () => {
       reward_product_id: null,
     });
     const db = makeMockDb([
+      f({ price: 1500, track_inventory: 1 }), // catalog price row
       f(offer),                          // explicit offerId select
       f({ sku: "TS-001" }),              // SKU
       f({ track_inventory: 1 }),         // trackInventory
@@ -178,6 +184,7 @@ describe("createStoreOrder", () => {
       reward_variant_id: "var_9",
     });
     const db = makeMockDb([
+      f({ price: 1500, track_inventory: 1 }), // catalog price row
       f(offer),                          // explicit offer select
       f({ sku: "TS-001" }),              // order line SKU
       f({ variations: '{"Color":"Green"}' }), // reward variant variations
@@ -208,6 +215,7 @@ describe("createStoreOrder", () => {
       reward_variant_id: "var_9",
     });
     const db = makeMockDb([
+      f({ price: 1500, track_inventory: 1 }), // catalog price row
       f(offer),                          // offer
       f({ sku: "TS-001" }),              // SKU
       f({ variations: '{"Color":"Green"}' }), // reward variations

@@ -96,18 +96,31 @@ export async function createStoreOrder(c: Context<AppContext>) {
 
   await assertOtpVerification(c, db, data);
 
+  const deliveryFee = await queries.getDeliveryFee(
+    db,
+    data.wilayaId,
+    data.deliveryType
+  );
+
+  if (deliveryFee === null) {
+    // Delivery to this wilaya (or this delivery type) is not configured —
+    // refuse the order instead of silently shipping for free. Refusal must
+    // happen BEFORE the customer is created so no orphan customer rows.
+    throw new BusinessLogicError(
+      data.deliveryType === "home"
+        ? "Home delivery is not available to this wilaya"
+        : "Stop-desk delivery is not available to this wilaya",
+      ERROR_CODES.DELIVERY_NOT_AVAILABLE,
+      { wilayaId: data.wilayaId, deliveryType: data.deliveryType }
+    );
+  }
+
   const customer = await queries.findOrCreateCustomer(db, {
     phone: data.phone,
     name: data.customerName,
     wilayaId: data.wilayaId,
     communeId: data.communeId,
   });
-
-  const deliveryFee = await queries.getDeliveryFee(
-    db,
-    data.wilayaId,
-    data.deliveryType
-  );
 
   // X-Forwarded-For first: the storefront worker forwards the shopper's IP
   // there — CF-Connecting-IP on this hop is the worker itself.

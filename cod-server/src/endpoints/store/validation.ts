@@ -28,6 +28,8 @@ export const storeOrderSchema = z.object({
   variantId: z.string().min(1).optional(),
   variantLabel: z.string().max(100).optional(),
   quantity: z.number().int().min(1).max(100).default(1),
+  // Display-only: accepted for storefront UI continuity but NEVER trusted for
+  // pricing — the server resolves the unit price from the catalog row.
   pricePerUnit: z.number().positive(),
   notes: z.string().max(500).optional(),
   // Explicit offer selection from client — server applies this exact offer rather than auto-detecting

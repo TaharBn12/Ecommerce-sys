@@ -371,11 +371,23 @@ export async function findOrCreateCustomer(
   return row;
 }
 
+/**
+ * Resolve the storefront delivery fee for a wilaya.
+ *
+ * Returns:
+ *  - the fee (DZD, may be 0 for a legitimately-free price) when available
+ *  - null when delivery is NOT available: a default profile exists but the
+ *    wilaya has no rule, or the rule disables the requested delivery type.
+ *    Callers must refuse the order — charging 0 silently would ship for free.
+ *  - 0 when NO shipping profile exists at all (fresh store, no config) —
+ *    mirrors the dashboard resolve-fee semantics (step 3: no profile, no
+ *    restriction).
+ */
 export async function getDeliveryFee(
   db: AppDb,
   wilayaId: number,
   deliveryType: "home" | "stop_desk",
-): Promise<number> {
+): Promise<number | null> {
   const profile = await db
     .select()
     .from(shippingProfiles)
@@ -395,7 +407,9 @@ export async function getDeliveryFee(
     )
     .get();
 
-  if (!rule) return 0;
+  if (!rule) return null;
+  if (deliveryType === "home" && !rule.homeEnabled) return null;
+  if (deliveryType === "stop_desk" && !rule.stopDeskEnabled) return null;
   return deliveryType === "stop_desk" ? rule.stopDeskPrice : rule.homePrice;
 }
 
@@ -650,6 +664,28 @@ export async function createStoreOrder(
 
   // ── Resolve phase (reads — no writes yet) ────────────────────────────────
 
+  // Server-authoritative pricing: the catalog row is the ONLY source of the
+  // unit price. The client's pricePerUnit is display-only and NEVER trusted —
+  // it reaches this function over plain HTTP and is trivially editable.
+  const catalogPriceRow = await db
+    .select({ price: products.price, trackInventory: products.trackInventory })
+    .from(products)
+    .where(and(eq(products.id, data.productId), isNull(products.deletedAt)))
+    .get();
+
+  const authoritativeUnitPrice = (() => {
+    if (data.variantSelections && data.variantSelections.length > 0) {
+      // Multi-variant: the order's price is the sum of per-variant prices.
+      // Variant prices are resolved per line below (lines carry them); the
+      // headline price is computed after lines are built.
+      return null;
+    }
+    if (data.variantId) {
+      return null; // resolved below from the variant row
+    }
+    return catalogPriceRow?.price ?? null;
+  })();
+
   const activeOffer = await selectApplicableOffer(
     db,
     data.productId,
@@ -661,17 +697,17 @@ export async function createStoreOrder(
   const finalDeliveryFee =
     activeOffer?.discountType === "free_shipping" ? 0 : data.deliveryFee;
 
-  const price = data.quantity * data.pricePerUnit;
-
   const lineRows: Array<typeof orderProducts.$inferInsert> = [];
 
   if (data.variantSelections && data.variantSelections.length > 0) {
+    let linesPriceTotal = 0;
     for (const group of groupVariantSelections(data.variantSelections)) {
-      const varSkuRow = await db
-        .select({ sku: productVariants.sku })
+      const varRow = await db
+        .select({ sku: productVariants.sku, price: productVariants.price })
         .from(productVariants)
         .where(eq(productVariants.id, group.variantId))
         .get();
+      linesPriceTotal += (varRow?.price ?? 0) * group.count;
       lineRows.push({
         id: crypto.randomUUID(),
         orderId: id,
@@ -679,44 +715,63 @@ export async function createStoreOrder(
         productName: data.productName,
         variantId: group.variantId,
         variantLabel: group.variantLabel,
-        sku: varSkuRow?.sku ?? null,
+        sku: varRow?.sku ?? null,
         quantity: group.count,
-        pricePerUnit: data.pricePerUnit,
-        lineTotal: group.count * data.pricePerUnit,
+        pricePerUnit: varRow?.price ?? 0,
+        lineTotal: (varRow?.price ?? 0) * group.count,
         createdAt: now,
       });
     }
-  } else {
-    let itemSku: string | null = null;
-    if (data.variantId) {
-      const varSkuRow = await db
-        .select({ sku: productVariants.sku })
-        .from(productVariants)
-        .where(eq(productVariants.id, data.variantId))
-        .get();
-      itemSku = varSkuRow?.sku ?? null;
-    } else {
-      const prodSkuRow = await db
-        .select({ sku: products.sku })
-        .from(products)
-        .where(eq(products.id, data.productId))
-        .get();
-      itemSku = prodSkuRow?.sku ?? null;
-    }
+    (lineRows as any).__priceTotal = linesPriceTotal;
+  } else if (data.variantId) {
+    const varRow = await db
+      .select({ sku: productVariants.sku, price: productVariants.price })
+      .from(productVariants)
+      .where(eq(productVariants.id, data.variantId))
+      .get();
+    const unitPrice = varRow?.price ?? authoritativeUnitPrice ?? 0;
     lineRows.push({
       id: crypto.randomUUID(),
       orderId: id,
       productId: data.productId,
       productName: data.productName,
-      variantId: data.variantId ?? null,
-      variantLabel: data.variantLabel ?? null,
-      sku: itemSku,
+      variantId: data.variantId,
+      variantLabel: data.variantLabel,
+      sku: varRow?.sku ?? null,
       quantity: data.quantity,
-      pricePerUnit: data.pricePerUnit,
-      lineTotal: price,
+      pricePerUnit: unitPrice,
+      lineTotal: unitPrice * data.quantity,
       createdAt: now,
     });
+    (lineRows as any).__priceTotal = unitPrice * data.quantity;
+  } else {
+    let itemSku: string | null = null;
+    const prodSkuRow = await db
+      .select({ sku: products.sku })
+      .from(products)
+      .where(eq(products.id, data.productId))
+      .get();
+    itemSku = prodSkuRow?.sku ?? null;
+    const unitPrice = authoritativeUnitPrice ?? 0;
+    lineRows.push({
+      id: crypto.randomUUID(),
+      orderId: id,
+      productId: data.productId,
+      productName: data.productName,
+      variantId: null,
+      variantLabel: null,
+      sku: itemSku,
+      quantity: data.quantity,
+      pricePerUnit: unitPrice,
+      lineTotal: unitPrice * data.quantity,
+      createdAt: now,
+    });
+    (lineRows as any).__priceTotal = unitPrice * data.quantity;
   }
+
+  // The order's price is the catalog-derived sum of its lines — never the
+  // client-supplied quantity × pricePerUnit.
+  const price = (lineRows as any).__priceTotal as number;
 
   let rewardLine: typeof orderProducts.$inferInsert | null = null;
   let rewardDeduct: DeductStockInput | null = null;

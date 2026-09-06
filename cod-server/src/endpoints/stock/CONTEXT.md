@@ -55,6 +55,7 @@ _Avoid_: Random order, alphabetical triage
 Terms owned by neighboring contexts — use them, don't redefine them here:
 
 - **Automatic deduction and restoration**: Orders context writes ORDER_* movements during creation, cancellation, return, and deletion — this module only performs deliberate manual adjustments
+- **Catalog inventory edits**: Products/Variants contexts now write ADJUSTMENT_* movements when a merchant edits stock directly — opening stock on variant create, deltas on inventory edits. Variant deletion removes the variant's scoped movements with the row (FK cascade), keeping the ledger sum reconciled
 - **Where inventory lives**: Products context owns the fields; this context reads and updates them
 - **Reward and offer stock checks**: Store context consults inventory before inserting free lines
 - **Selling price used for valuation**: Products context pricing — never cost price

@@ -30,9 +30,9 @@ _Avoid_: Cart order, multi-item order
 Checkout looks up the customer by phone; an existing customer is reused exactly as-is, otherwise a new one is created from the checkout fields.
 _Avoid_: Registration, sign-up
 
-**Client-Supplied Price**:
-The unit price arrives from the storefront with the order, and the server computes totals from it rather than re-reading the catalog price.
-_Avoid_: Server-priced total, catalog lookup price
+**Server-Authoritative Pricing**:
+The unit price is resolved from the catalog at order time — the product's own price for simple products, each variant's price for variant orders. The client-sent unit price is accepted in the payload for display continuity but never trusted for money math. Totals, COD amounts, customer spend, and driver cash all derive from catalog prices.
+_Avoid_: Client-supplied price, trusted unit price
 
 **Variant Selections**:
 One entry per ordered unit when different variants are mixed; identical units collapse into a single order line and stock deducts per variant.
@@ -83,12 +83,12 @@ Terms owned by neighboring contexts — use them, don't redefine them here:
 
 ## Edge Cases
 
-**Prices arrive from the browser**: Totals run on the client-sent unit price. That is today's contract — treat any "hardening" as a code change, not a docs fix.
+**Prices are resolved server-side**: A forged client unit price changes nothing — the catalog row is the only price source for storefront orders. Dashboard-created orders (authenticated staff) may still set custom prices; that flexibility is a merchant feature, not a hole.
 
 **Repeat buyers keep their record**: A returning phone reuses the stored customer untouched — the new checkout's name or wilaya never overwrites it.
 
 **Rewards vanish quietly**: An out-of-stock Buy X Get Y reward disappears from the order without error or notice to the caller.
 
-**Absent wilayas mean unsupported**: The shipping-rates map simply omits uncovered wilayas; clients must treat missing keys as no-delivery.
+**Delivery availability is server-enforced**: A wilaya the default profile does not cover — or a delivery type the merchant disabled — cannot be ordered: the API refuses with DELIVERY_NOT_AVAILABLE instead of charging 0. Only a store with no shipping profile at all accepts orders at fee 0.
 
 **Limits are capped twice**: Clients may ask for fewer results, but the server clamps page sizes regardless of what was requested.

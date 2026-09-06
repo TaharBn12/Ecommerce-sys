@@ -104,6 +104,47 @@ export async function getAllDrivers(db: AppDb, filters?: DriverFilters) {
   }));
 }
 
+/**
+ * Driver cash reconciliation: compares the driver's denormalized pendingCash
+ * counter against the authoritative sum of delivered-but-unsettled orders.
+ * drift ≠ 0 means the ledger and reality disagree — damage from an old bug,
+ * a manual D1 edit, or a mid-settlement failure. Surfaced so ops can see it.
+ */
+export async function getDriverCashReconciliation(db: AppDb, driverId: string) {
+  const [driverRow, pendingRow] = await Promise.all([
+    db
+      .select({ pendingCash: drivers.pendingCash })
+      .from(drivers)
+      .where(eq(drivers.id, driverId))
+      .get(),
+    db
+      .select({
+        total: sql<number>`coalesce(sum(${orders.codAmount}), 0)`,
+        c: count(),
+      })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.driverId, driverId),
+          eq(orders.status, "delivered"),
+          sql`${orders.codPaymentId} IS NULL`,
+        ),
+      )
+      .get(),
+  ]);
+
+  const pendingCash = Number(driverRow?.pendingCash ?? 0);
+  const pendingOrdersTotal = Number(pendingRow?.total ?? 0);
+  const pendingOrdersCount = Number(pendingRow?.c ?? 0);
+
+  return {
+    pendingCash,
+    pendingOrdersTotal,
+    pendingOrdersCount,
+    drift: pendingCash - pendingOrdersTotal,
+  };
+}
+
 export async function getDriverById(db: AppDb, driverId: string) {
   const driver = await db
     .select()
@@ -122,18 +163,22 @@ export async function getDriverById(db: AppDb, driverId: string) {
     .where(eq(driverCompensations.driverId, driverId))
     .get();
 
-  const recentOrders = await db
-    .select()
-    .from(orders)
-    .where(eq(orders.driverId, driverId))
-    .orderBy(desc(orders.updatedAt))
-    .limit(10)
-    .all();
+  const [recentOrders, cashReconciliation] = await Promise.all([
+    db
+      .select()
+      .from(orders)
+      .where(eq(orders.driverId, driverId))
+      .orderBy(desc(orders.updatedAt))
+      .limit(10)
+      .all(),
+    getDriverCashReconciliation(db, driverId),
+  ]);
 
   return {
     ...driver,
     compensationWilayaCount: compStats?.c ?? 0,
     recentOrders,
+    cashReconciliation,
   };
 }
 

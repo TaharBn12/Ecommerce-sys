@@ -867,8 +867,9 @@ describe("Orders — targeted business-logic tests", () => {
         expect.objectContaining({ price: 12000 })
       );
 
-      // codAmount is NOT in the sync call — it stays stale at 9600 despite price being 12000.
-      // This is the documented gap: carrier collects 12600 but our DB says 9600.
+      // The caller passes only price — syncOrderAfterCarrierUpdate recomputes
+      // codAmount internally (price + deliveryFee) so settlement follows the
+      // carrier amount. Query-level behavior is locked in flagged-fixes.e2e.
       expect(queries.syncOrderAfterCarrierUpdate).not.toHaveBeenCalledWith(
         expect.anything(),
         "ord_1",

@@ -78,6 +78,7 @@
     "active_orders": "Active Orders",
     "total_delivered": "Total Delivered",
     "pending_cash": "Pending Cash",
+    "cash_drift_warning": "Driver cash ledger mismatch: held {pending} but unsettled orders total {orders}. Difference: {drift}. Review settlements before paying out.",
     "pending_cash_hint": "COD collected, not yet remitted",
     "total_paid": "Total Remitted",
     "total_paid_hint": "Total cash handed to shop",

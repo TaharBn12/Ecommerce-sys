@@ -144,8 +144,12 @@ describe("getVariantById", () => {
 
 describe("createVariant", () => {
   it("creates and returns the new variant", async () => {
-    // INSERT (run) → getVariantById → productVariants.get()
-    const db = makeMockDb([f(variantRow({ product_id: "prod_1" }))]);
+    // batch INSERT (run — no queue consumption) → trackInventory check (f)
+    // → getVariantById → productVariants.get()
+    const db = makeMockDb([
+      f({ track_inventory: 1 }),
+      f(variantRow({ product_id: "prod_1" })),
+    ]);
     const result = await createVariant(db as any, "prod_1", {
       variations: { Color: "Red" },
       price: 1500,
@@ -178,8 +182,13 @@ describe("createVariant", () => {
 
 describe("updateVariant", () => {
   it("updates and returns the variant", async () => {
-    // UPDATE (run with no queue) → getVariantById → productVariants.get()
-    const db = makeMockDb([f(variantRow({ inventory: 20 }))]);
+    // batch UPDATE (run — no queue) → inventory pre-read (f) → trackInventory (f)
+    // → getVariantById → productVariants.get()
+    const db = makeMockDb([
+      f({ product_id: "prod_1", inventory: 20 }),
+      f({ track_inventory: 1 }),
+      f(variantRow({ inventory: 20 })),
+    ]);
     const result = await updateVariant(db as any, "var_1", { inventory: 20 });
     expect(result).not.toBeNull();
     expect(result!.inventory).toBe(20);

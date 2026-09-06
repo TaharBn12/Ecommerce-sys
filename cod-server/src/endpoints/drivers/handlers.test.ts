@@ -106,6 +106,7 @@ describe("Drivers Endpoint - Error Scenarios", () => {
         createdAt: new Date("2024-01-01").toISOString(),
         updatedAt: new Date("2024-01-15").toISOString(),
         compensationWilayaCount: 0,
+        cashReconciliation: { pendingCash: 0, pendingOrdersTotal: 0, pendingOrdersCount: 0, drift: 0 },
         recentOrders: [],
       });
 
@@ -224,6 +225,7 @@ describe("Drivers Endpoint - Error Scenarios", () => {
         createdAt: new Date("2024-01-01").toISOString(),
         updatedAt: new Date("2024-01-15").toISOString(),
         compensationWilayaCount: 0,
+        cashReconciliation: { pendingCash: 0, pendingOrdersTotal: 0, pendingOrdersCount: 0, drift: 0 },
         recentOrders: [],
       });
 
@@ -267,6 +269,7 @@ describe("Drivers Endpoint - Error Scenarios", () => {
         createdAt: new Date("2024-01-01").toISOString(),
         updatedAt: new Date("2024-01-15").toISOString(),
         compensationWilayaCount: 0,
+        cashReconciliation: { pendingCash: 0, pendingOrdersTotal: 0, pendingOrdersCount: 0, drift: 0 },
         recentOrders: [],
       });
 
