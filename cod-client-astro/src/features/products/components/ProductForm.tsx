@@ -27,6 +27,7 @@ import {
   generateCombinations,
   productErrorMessage,
   toSlug,
+  variantLabel,
 } from "@/features/products/model";
 import type {
   ProductImage,
@@ -232,8 +233,17 @@ export function ProductForm({ productId }: { productId?: string }) {
     if (!name.trim()) next.name = t("form.error_name_price_required");
     if (!price || Number(price) < 0)
       next.price = t("form.error_name_price_required");
+    else if (!Number.isInteger(Number(price)))
+      next.price = t("form.error_price_integer");
     if (hasVariantsSwitch && variantRows.some((row) => !row.sku.trim()))
       next.variantRowsSku = t("form.error_required_variant_sku");
+    if (hasVariantsSwitch) {
+      const skus = variantRows
+        .map((row) => row.sku.trim())
+        .filter(Boolean);
+      if (new Set(skus).size !== skus.length)
+        next.variantRowsSkuDuplicate = t("form.error_duplicate_variant_sku");
+    }
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -242,7 +252,7 @@ export function ProductForm({ productId }: { productId?: string }) {
     if (!validate()) return;
     setBusy(true);
     setMessage(null);
-    try {
+    {
       const apiOptions = apiVariantOptions(variantOptions);
       const hasVariants = apiOptions.length > 0 && variantRows.length > 0;
       const variantsToDelete: string[] = [];
@@ -302,51 +312,82 @@ export function ProductForm({ productId }: { productId?: string }) {
         variantOptions: hasVariants ? apiOptions : null,
       };
 
-      let savedId: string;
-      if (editing && productId) {
-        await updateProduct(productId, data as never);
-        savedId = productId;
-      } else {
-        savedId = (await createProduct(data as never)).data.id;
-      }
-
-      if (hasVariants) {
-        for (const row of variantRows) {
-          if (row.existingId && orphanedIds.has(row.existingId)) continue;
-          const variantData = {
-            variations: row.variations,
-            price: Math.round(Number(row.price) || 0),
-            sku: row.sku.trim(),
-            inventory: Number(row.inventory) || 0,
-            lowStockThreshold: Number(row.lowStockThreshold) || 5,
-            active: row.active,
-            imageId: row.imageId ?? null,
-          };
-          if (row.existingId)
-            await updateVariant(savedId, row.existingId, variantData as never);
-          else await createVariant(savedId, variantData as never);
+      // Track how far the multi-step save got so the failure message can say
+      // WHAT failed and the retry can never duplicate the product.
+      let savedId: string | null = null;
+      let failedStep: "variants" | "images" | null = null;
+      let failedVariantLabel: string | null = null;
+      try {
+        if (editing && productId) {
+          await updateProduct(productId, data as never);
+          savedId = productId;
+        } else {
+          savedId = (await createProduct(data as never)).data.id;
         }
+
+        if (hasVariants) {
+          failedStep = "variants";
+          for (const row of variantRows) {
+            if (row.existingId && orphanedIds.has(row.existingId)) continue;
+            const variantData = {
+              variations: row.variations,
+              price: Math.round(Number(row.price) || 0),
+              sku: row.sku.trim(),
+              inventory: Number(row.inventory) || 0,
+              lowStockThreshold: Number(row.lowStockThreshold) || 5,
+              active: row.active,
+              imageId: row.imageId ?? null,
+            };
+            failedVariantLabel = variantLabel(row.variations) || row.sku.trim();
+            if (row.existingId)
+              await updateVariant(savedId, row.existingId, variantData as never);
+            else await createVariant(savedId, variantData as never);
+          }
+          failedVariantLabel = null;
+        }
+        failedStep = "images";
+        for (const variantId of variantsToDelete) {
+          await deleteVariant(savedId, variantId);
+        }
+        for (const imageId of deletedImageIds) {
+          await deleteProductImage(savedId, imageId);
+        }
+        for (let i = 0; i < pendingImages.length; i++) {
+          await saveProductImage(savedId, {
+            key: pendingImages[i].key,
+            src: pendingImages[i].url,
+            position: existingImages.length - deletedImageIds.length + i + 1,
+          });
+        }
+        failedStep = null;
+        notify.flashSuccess(t(editing ? "form.success_edit" : "form.success_add"));
+        window.location.assign("/products");
+        return;
+      } catch (cause) {
+        const detail = productErrorMessage(cause, t);
+        let message = detail;
+        if (failedStep === "variants" && failedVariantLabel) {
+          message = `${t("form.error_variant_row")
+            .replace("{variant}", failedVariantLabel)} — ${detail}`;
+        }
+
+        // Partial-save trap: the product row EXISTS (created or updated) but
+        // a later step failed. Retrying "create" would duplicate the product —
+        // send the merchant to the editor instead, where retry = update.
+        if (savedId && !editing) {
+          notify.error(
+            t("form.partial_save_redirect").replace("{message}", detail),
+          );
+          window.location.assign(
+            `/products/${encodeURIComponent(savedId)}/edit`,
+          );
+          return;
+        }
+
+        setMessage(message);
+        notify.error(message);
+        setBusy(false);
       }
-      for (const variantId of variantsToDelete) {
-        await deleteVariant(savedId, variantId);
-      }
-      for (const imageId of deletedImageIds) {
-        await deleteProductImage(savedId, imageId);
-      }
-      for (let i = 0; i < pendingImages.length; i++) {
-        await saveProductImage(savedId, {
-          key: pendingImages[i].key,
-          src: pendingImages[i].url,
-          position: existingImages.length - deletedImageIds.length + i + 1,
-        });
-      }
-      notify.flashSuccess(t(editing ? "form.success_edit" : "form.success_add"));
-      window.location.assign("/products");
-    } catch (cause) {
-      const message = productErrorMessage(cause, t);
-      setMessage(message);
-      notify.error(message);
-      setBusy(false);
     }
   }
 

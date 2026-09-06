@@ -76,12 +76,55 @@ export function parseProductRoute(pathname: string): ProductRoute {
   }
 }
 
+interface ApiLikeError {
+  code?: string;
+  status?: number;
+  context?: Record<string, unknown>;
+}
+
+function asApiError(cause: unknown): ApiLikeError | null {
+  if (!cause || typeof cause !== "object") return null;
+  const candidate = cause as ApiLikeError;
+  return typeof candidate.code === "string" ? candidate : null;
+}
+
 export function productErrorMessage(cause: unknown, t: (key: string) => string) {
-  const code = cause && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
+  const api = asApiError(cause);
+  const code = api?.code ?? "";
+  const context = api?.context;
+
   if (code === "PRODUCT_NOT_FOUND") return t("error_not_found");
   if (code === "PRODUCT_HAS_ORDERS") return t("error_delete_has_orders");
-  if (code === "DUPLICATE_SKU") return t("error_duplicate_sku");
   if (code === "INSUFFICIENT_STOCK") return t("error_insufficient_stock");
+
+  if (code === "DUPLICATE_SKU") {
+    const sku = typeof context?.sku === "string" ? context.sku : null;
+    return sku
+      ? t("error_duplicate_sku_named").replace("{sku}", sku)
+      : t("error_duplicate_sku");
+  }
+
+  if (code === "VALIDATION_FAILED") {
+    const fields = Array.isArray(context?.fields) ? context!.fields : [];
+    const lines = fields
+      .map((field) => {
+        const entry = field as { path?: string; message?: string };
+        return entry.path ? `${entry.path}: ${entry.message ?? ""}` : entry.message ?? "";
+      })
+      .filter(Boolean);
+    return lines.length
+      ? `${t("error_validation")} — ${lines.join(" · ")}`
+      : t("error_validation");
+  }
+
+  if (code === "INTERNAL_SERVER_ERROR" || (api?.status ?? 0) >= 500) {
+    const requestId =
+      typeof context?.requestId === "string" ? context.requestId : null;
+    return requestId
+      ? t("error_unexpected_id").replace("{id}", requestId)
+      : t("error_generic");
+  }
+
   return t("error_generic");
 }
 
