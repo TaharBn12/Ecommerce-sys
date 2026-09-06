@@ -36,6 +36,7 @@ beforeAll(async () => {
   registry.push(mf);
   const d1 = await mf.getD1Database("DB");
   const dir = resolve(__dirname, "../../db/migrations");
+  const preparedStatements: D1PreparedStatement[] = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) {
     const statements = readFileSync(`${dir}/${file}`, "utf8")
       .split("--> statement-breakpoint")
@@ -43,8 +44,11 @@ beforeAll(async () => {
       .map((s) => s.replace(/;+\s*$/, "").trim())
       .filter((s) => s.replace(/--[^\n]*/g, "").trim().length > 0);
     for (const statement of statements) {
-      await d1.prepare(statement).run();
+      preparedStatements.push(d1.prepare(statement));
     }
+  }
+  for (let i = 0; i < preparedStatements.length; i += 50) {
+    await d1.batch(preparedStatements.slice(i, i + 50));
   }
   db = drizzle(d1 as unknown as D1Database, { schema }) as unknown as AppDb;
 

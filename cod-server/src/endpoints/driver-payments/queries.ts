@@ -11,6 +11,7 @@ import { ERROR_CODES } from "../../../../cod-shared/errors/codes";
 export { getDriverPayments, getPendingSettlementOrders } from "../../../../cod-shared/queries/driver-payments";
 
 type Database = ReturnType<typeof getDb>;
+type BatchStatement = Parameters<Database["batch"]>[0][number];
 
 /**
  * Create a driver payment record and settle the selected orders.
@@ -82,46 +83,51 @@ export async function createDriverPayment(
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
-  // Insert payment record
-  await db.insert(driverPayments).values({
-    id,
-    driverId,
-    type,
-    amount,
-    orderCount: selectedOrders.length,
-    notes: notes ?? null,
-    createdBy,
-    createdByName,
-    createdAt: now,
-  });
+  // One atomic batch: payment row + order linking + driver counters commit
+  // together or not at all. The previous separate awaits left drift windows —
+  // a failure after linking marked orders settled while pendingCash stayed
+  // inflated (phantom cash, unfixable via retry because of the settled guard).
+  const statements: BatchStatement[] = [
+    db.insert(driverPayments).values({
+      id,
+      driverId,
+      type,
+      amount,
+      orderCount: selectedOrders.length,
+      notes: notes ?? null,
+      createdBy,
+      createdByName,
+      createdAt: now,
+    }),
+  ];
 
-  // Link orders to payment (COD settlement)
   if (type === "cod_remittance" || type === "net_settlement") {
-    await db
-      .update(orders)
-      .set({ codPaymentId: id })
-      .where(inArray(orders.id, orderIds));
+    statements.push(
+      db
+        .update(orders)
+        .set({ codPaymentId: id })
+        .where(inArray(orders.id, orderIds)),
+      db
+        .update(drivers)
+        .set({
+          pendingCash: sql`MAX(0, ${drivers.pendingCash} - ${codTotal})`,
+          totalPaid: sql`${drivers.totalPaid} + ${codTotal}`,
+          updatedAt: now,
+        })
+        .where(eq(drivers.id, driverId)),
+    );
   }
 
-  // Link orders to payment (fee settlement)
   if (type === "fee_payment" || type === "net_settlement") {
-    await db
-      .update(orders)
-      .set({ feePaymentId: id })
-      .where(inArray(orders.id, orderIds));
+    statements.push(
+      db
+        .update(orders)
+        .set({ feePaymentId: id })
+        .where(inArray(orders.id, orderIds)),
+    );
   }
 
-  // Update driver aggregate counters for COD
-  if (type === "cod_remittance" || type === "net_settlement") {
-    await db
-      .update(drivers)
-      .set({
-        pendingCash: sql`${drivers.pendingCash} - ${codTotal}`,
-        totalPaid: sql`${drivers.totalPaid} + ${codTotal}`,
-        updatedAt: now,
-      })
-      .where(eq(drivers.id, driverId));
-  }
+  await db.batch(statements as [BatchStatement, ...BatchStatement[]]);
 
   return { id, driverId, type, amount, orderCount: selectedOrders.length, notes: notes ?? null, createdBy, createdByName, createdAt: now };
 }

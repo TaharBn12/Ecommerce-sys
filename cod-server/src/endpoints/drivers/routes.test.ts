@@ -56,6 +56,7 @@ function driverRow(overrides: Record<string, any> = {}) {
     createdAt: NOW,
     updatedAt: NOW,
     compensationWilayaCount: 12,
+    cashReconciliation: { pendingCash: 0, pendingOrdersTotal: 0, pendingOrdersCount: 0, drift: 0 },
     recentOrders: [],
     ...overrides,
   };

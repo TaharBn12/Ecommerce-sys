@@ -4,6 +4,13 @@ export type DriverStatus = "available" | "busy" | "inactive";
 export type VehicleType = "motorcycle" | "car" | "van";
 export type DriverPaymentType = "cod_remittance" | "fee_payment" | "net_settlement";
 
+export interface DriverCashReconciliation {
+  pendingCash: number;
+  pendingOrdersTotal: number;
+  pendingOrdersCount: number;
+  drift: number;
+}
+
 export interface Driver {
   id: string;
   firstName: string;
@@ -19,6 +26,7 @@ export interface Driver {
   totalPaid: number;
   notes?: string | null;
   recentOrders?: DriverOrder[];
+  cashReconciliation?: DriverCashReconciliation;
   createdAt: string;
   updatedAt: string;
 }

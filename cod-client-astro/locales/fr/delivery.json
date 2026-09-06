@@ -78,6 +78,7 @@
     "active_orders": "Commandes actives",
     "total_delivered": "Total livré",
     "pending_cash": "Espèces en attente",
+    "cash_drift_warning": "Écart de caisse livreur : {pending} détenus mais {orders} de commandes non réglées. Différence : {drift}. Vérifiez les règlements avant tout paiement.",
     "pending_cash_hint": "COD collecté, pas encore remis",
     "total_paid": "Total reversé",
     "total_paid_hint": "Total des espèces remises à la boutique",

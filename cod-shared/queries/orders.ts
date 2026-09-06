@@ -19,6 +19,8 @@ import {
   communes,
   stockMovements,
   companyShipments,
+  companyApiLogs,
+  webhookEvents,
 } from "../db/schema";
 import type { OrderStatus } from "../db/schema";
 import {
@@ -193,30 +195,37 @@ export async function createOrder(
   productsData: Array<typeof orderProducts.$inferInsert>,
   actor?: { id: string; name: string } | null,
 ) {
-  await db.insert(orders).values(orderData);
+  const now = orderData.createdAt ?? new Date().toISOString();
+
+  const statements: BatchStatement[] = [
+    db.insert(orders).values(orderData),
+  ];
 
   if (productsData.length > 0) {
-    await db.insert(orderProducts).values(productsData);
+    statements.push(db.insert(orderProducts).values(productsData));
   }
 
-  await db.insert(orderStatusHistory).values({
-    id: crypto.randomUUID(),
-    orderId: orderData.id!,
-    status: orderData.status!,
-    timestamp: orderData.createdAt!,
-    by: null,
-  });
+  statements.push(
+    db.insert(orderStatusHistory).values({
+      id: crypto.randomUUID(),
+      orderId: orderData.id!,
+      status: orderData.status!,
+      timestamp: orderData.createdAt!,
+      by: null,
+    }),
+  );
 
-  await db
-    .update(customers)
-    .set({
-      totalOrders: sql`${customers.totalOrders} + 1`,
-      totalSpent: sql`${customers.totalSpent} + ${orderData.price ?? 0}`,
-      lastOrderAt: orderData.createdAt,
-    })
-    .where(eq(customers.id, orderData.customerId));
+  statements.push(
+    db
+      .update(customers)
+      .set({
+        totalOrders: sql`${customers.totalOrders} + 1`,
+        totalSpent: sql`${customers.totalSpent} + ${orderData.price ?? 0}`,
+        lastOrderAt: orderData.createdAt,
+      })
+      .where(eq(customers.id, orderData.customerId)),
+  );
 
-  const now = orderData.createdAt ?? new Date().toISOString();
   for (const item of productsData) {
     const qty = item.quantity as number;
 
@@ -228,76 +237,81 @@ export async function createOrder(
 
     if (!productRow?.trackInventory) continue;
 
+    // Guarded deduction, same pattern as the storefront path: the movement's
+    // qtyBefore/qtyAfter are subselects guarded by inventory >= qty. When
+    // stock is insufficient (or a concurrent writer already took it), the
+    // subselects return NULL, the movement insert violates NOT NULL, and the
+    // ENTIRE batch rolls back — no oversell floor, no lost-update race.
     if (item.variantId) {
-      const variantRow = await db
-        .select({ inventory: productVariants.inventory })
-        .from(productVariants)
-        .where(eq(productVariants.id, item.variantId))
-        .get();
-
-      const qtyBefore = variantRow?.inventory ?? 0;
-      const qtyAfter = Math.max(0, qtyBefore - qty);
-
-      await db
-        .update(productVariants)
-        .set({ inventory: qtyAfter, updatedAt: now })
-        .where(eq(productVariants.id, item.variantId));
-
-      await db
-        .insert(stockMovements)
-        .values({
+      statements.push(
+        db.insert(stockMovements).values({
           id: crypto.randomUUID(),
           productId: item.productId,
           variantId: item.variantId,
           type: "ORDER_DEDUCTED",
-          delta: -(qtyBefore - qtyAfter),
-          qtyBefore,
-          qtyAfter,
+          delta: -qty,
+          qtyBefore: sql`(SELECT inventory FROM product_variants WHERE id = ${item.variantId} AND inventory >= ${qty})`,
+          qtyAfter: sql`(SELECT inventory - ${qty} FROM product_variants WHERE id = ${item.variantId} AND inventory >= ${qty})`,
           reason: null,
           reference: orderData.id ?? null,
           createdBy: actor?.id ?? "system",
           createdByName: actor?.name ?? "النظام",
           createdAt: now,
-        })
-        .catch((err) =>
-          console.error("[stock] Failed to log ORDER_DEDUCTED movement:", err),
-        );
+        }),
+      );
+      statements.push(
+        db
+          .update(productVariants)
+          .set({
+            inventory: sql`${productVariants.inventory} - ${qty}`,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(productVariants.id, item.variantId),
+              sql`${productVariants.inventory} >= ${qty}`,
+            ),
+          ),
+      );
     } else {
-      const productInventoryRow = await db
-        .select({ inventory: products.inventory })
-        .from(products)
-        .where(eq(products.id, item.productId))
-        .get();
-
-      const qtyBefore = productInventoryRow?.inventory ?? 0;
-      const qtyAfter = Math.max(0, qtyBefore - qty);
-
-      await db
-        .update(products)
-        .set({ inventory: qtyAfter, updatedAt: now })
-        .where(eq(products.id, item.productId));
-
-      await db
-        .insert(stockMovements)
-        .values({
+      statements.push(
+        db.insert(stockMovements).values({
           id: crypto.randomUUID(),
           productId: item.productId,
           variantId: null,
           type: "ORDER_DEDUCTED",
-          delta: -(qtyBefore - qtyAfter),
-          qtyBefore,
-          qtyAfter,
+          delta: -qty,
+          qtyBefore: sql`(SELECT inventory FROM products WHERE id = ${item.productId} AND inventory >= ${qty})`,
+          qtyAfter: sql`(SELECT inventory - ${qty} FROM products WHERE id = ${item.productId} AND inventory >= ${qty})`,
           reason: null,
           reference: orderData.id ?? null,
           createdBy: actor?.id ?? "system",
           createdByName: actor?.name ?? "النظام",
           createdAt: now,
-        })
-        .catch((err) =>
-          console.error("[stock] Failed to log ORDER_DEDUCTED movement:", err),
-        );
+        }),
+      );
+      statements.push(
+        db
+          .update(products)
+          .set({
+            inventory: sql`${products.inventory} - ${qty}`,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(products.id, item.productId),
+              sql`${products.inventory} >= ${qty}`,
+            ),
+          ),
+      );
     }
   }
+
+  // Atomic: order row, lines, history, customer stats, stock deduction, and
+  // ledger commit together or not at all. Guarded deductions make the batch
+  // fail (and roll back entirely) when stock is insufficient — no silent
+  // floor-at-zero, no lost-update races.
+  await db.batch(statements as [BatchStatement, ...BatchStatement[]]);
 
   return orderData.id;
 }
@@ -313,33 +327,37 @@ export async function updateOrderStatus(
 
   const order = await db.select().from(orders).where(eq(orders.id, orderId)).get();
 
-  await db
-    .update(orders)
-    .set({
-      status: newStatus,
-      updatedAt: now,
-      ...(newStatus === "delivered" ? { deliveryTime: now } : {}),
-    })
-    .where(eq(orders.id, orderId));
+  const statements: BatchStatement[] = [
+    db
+      .update(orders)
+      .set({
+        status: newStatus,
+        updatedAt: now,
+        ...(newStatus === "delivered" ? { deliveryTime: now } : {}),
+      })
+      .where(eq(orders.id, orderId)),
 
-  await db.insert(orderStatusHistory).values({
-    id: crypto.randomUUID(),
-    orderId,
-    status: newStatus,
-    timestamp: now,
-    by: userId ?? null,
-  });
+    db.insert(orderStatusHistory).values({
+      id: crypto.randomUUID(),
+      orderId,
+      status: newStatus,
+      timestamp: now,
+      by: userId ?? null,
+    }),
+  ];
 
   if (newStatus === "delivered" && order?.driverId) {
-    await db
-      .update(drivers)
-      .set({
-        totalDelivered: sql`${drivers.totalDelivered} + 1`,
-        totalEarnings: sql`${drivers.totalEarnings} + ${order.driverFee ?? 0}`,
-        pendingCash: sql`${drivers.pendingCash} + ${order.codAmount ?? 0}`,
-        updatedAt: now,
-      })
-      .where(eq(drivers.id, order.driverId));
+    statements.push(
+      db
+        .update(drivers)
+        .set({
+          totalDelivered: sql`${drivers.totalDelivered} + 1`,
+          totalEarnings: sql`${drivers.totalEarnings} + ${order.driverFee ?? 0}`,
+          pendingCash: sql`${drivers.pendingCash} + ${order.codAmount ?? 0}`,
+          updatedAt: now,
+        })
+        .where(eq(drivers.id, order.driverId)),
+    );
   }
 
   const terminalStatuses = ["cancelled", "returned"];
@@ -347,12 +365,14 @@ export async function updateOrderStatus(
 
   if (!wasAlreadyTerminal && (newStatus === "cancelled" || newStatus === "returned")) {
     // Update customer totalSpent when order is cancelled/returned
-    await db
-      .update(customers)
-      .set({
-        totalSpent: sql`MAX(0, ${customers.totalSpent} - ${order?.price ?? 0})`,
-      })
-      .where(eq(customers.id, order?.customerId ?? ""));
+    statements.push(
+      db
+        .update(customers)
+        .set({
+          totalSpent: sql`MAX(0, ${customers.totalSpent} - ${order?.price ?? 0})`,
+        })
+        .where(eq(customers.id, order?.customerId ?? "")),
+    );
 
     const movementType =
       newStatus === "cancelled" ? "ORDER_CANCELLED" : "ORDER_RETURNED";
@@ -391,14 +411,15 @@ export async function updateOrderStatus(
         const qtyBefore = variantRow?.inventory ?? 0;
         const qtyAfter = qtyBefore + remaining;
 
-        await db
-          .update(productVariants)
-          .set({ inventory: qtyAfter, updatedAt: now })
-          .where(eq(productVariants.id, op.variantId));
+        statements.push(
+          db
+            .update(productVariants)
+            .set({ inventory: qtyAfter, updatedAt: now })
+            .where(eq(productVariants.id, op.variantId)),
+        );
 
-        await db
-          .insert(stockMovements)
-          .values({
+        statements.push(
+          db.insert(stockMovements).values({
             id: crypto.randomUUID(),
             productId: op.productId,
             variantId: op.variantId,
@@ -411,10 +432,8 @@ export async function updateOrderStatus(
             createdBy: userId ?? "system",
             createdByName: userName ?? "النظام",
             createdAt: now,
-          })
-          .catch((err) =>
-            console.error("[stock] Failed to log", movementType, "movement:", err),
-          );
+          }),
+        );
       } else {
         const productInventoryRow = await db
           .select({ inventory: products.inventory })
@@ -425,14 +444,15 @@ export async function updateOrderStatus(
         const qtyBefore = productInventoryRow?.inventory ?? 0;
         const qtyAfter = qtyBefore + remaining;
 
-        await db
-          .update(products)
-          .set({ inventory: qtyAfter, updatedAt: now })
-          .where(eq(products.id, op.productId));
+        statements.push(
+          db
+            .update(products)
+            .set({ inventory: qtyAfter, updatedAt: now })
+            .where(eq(products.id, op.productId)),
+        );
 
-        await db
-          .insert(stockMovements)
-          .values({
+        statements.push(
+          db.insert(stockMovements).values({
             id: crypto.randomUUID(),
             productId: op.productId,
             variantId: null,
@@ -445,18 +465,25 @@ export async function updateOrderStatus(
             createdBy: userId ?? "system",
             createdByName: userName ?? "النظام",
             createdAt: now,
-          })
-          .catch((err) =>
-            console.error("[stock] Failed to log", movementType, "movement:", err),
-          );
+          }),
+        );
       }
 
-      await db
-        .update(orderProducts)
-        .set({ status: "returned", returnedQuantity: op.quantity })
-        .where(eq(orderProducts.id, op.id));
+      statements.push(
+        db
+          .update(orderProducts)
+          .set({ status: "returned", returnedQuantity: op.quantity })
+          .where(eq(orderProducts.id, op.id)),
+      );
     }
   }
+
+  // Atomic: status, history, driver credit, customer stats, restock, and line
+  // returns commit together or not at all. Without the batch, a mid-sequence
+  // failure committed "cancelled" without the restock — and the
+  // wasAlreadyTerminal guard then blocked every retry, permanently losing
+  // the inventory.
+  await db.batch(statements as [BatchStatement, ...BatchStatement[]]);
 
   return true;
 }
@@ -683,7 +710,13 @@ export async function syncOrderAfterCarrierUpdate(
   const patch: Record<string, unknown> = { updatedAt: new Date().toISOString() };
   if (fields.customerName !== undefined) patch.customerName = fields.customerName;
   if (fields.phone !== undefined) patch.phone = fields.phone;
-  if (fields.price !== undefined) patch.price = fields.price;
+  if (fields.price !== undefined) {
+    patch.price = fields.price;
+    // The COD the driver is booked to collect must follow the carrier
+    // amount — leaving codAmount stale made settlement and dashboards run
+    // on the old number while the carrier collected the new one.
+    patch.codAmount = sql`${fields.price} + ${orders.deliveryFee}`;
+  }
 
   await db.update(orders).set(patch).where(eq(orders.id, orderId));
 }
@@ -717,7 +750,7 @@ export async function clearOrderTracking(db: AppDb, orderId: string) {
 
 export async function deleteOrder(db: AppDb, orderId: string) {
   const now = new Date().toISOString();
-  
+
   // Get order details first to update customer stats
   const order = await db.select().from(orders).where(eq(orders.id, orderId)).get();
 
@@ -728,15 +761,50 @@ export async function deleteOrder(db: AppDb, orderId: string) {
     .where(eq(orderProducts.orderId, orderId))
     .all();
 
-  // Update customer stats BEFORE deleting the order
+  const statements: BatchStatement[] = [];
+
+  // Update customer stats BEFORE deleting the order.
+  // totalOrders always drops (the order no longer exists). totalSpent is only
+  // subtracted when the order was still counting as spend: cancelled/returned
+  // orders already rolled their spend back at status-change time —
+  // subtracting again would double-decrement (e.g. cancel + delete).
   if (order) {
-    await db
-      .update(customers)
-      .set({
-        totalOrders: sql`MAX(0, ${customers.totalOrders} - 1)`,
-        totalSpent: sql`MAX(0, ${customers.totalSpent} - ${order.price ?? 0})`,
-      })
-      .where(eq(customers.id, order.customerId));
+    const spendAlreadyRolledBack =
+      order.status === "cancelled" || order.status === "returned";
+
+    statements.push(
+      db
+        .update(customers)
+        .set({
+          totalOrders: sql`MAX(0, ${customers.totalOrders} - 1)`,
+          ...(spendAlreadyRolledBack
+            ? {}
+            : {
+                totalSpent: sql`MAX(0, ${customers.totalSpent} - ${order.price ?? 0})`,
+              }),
+        })
+        .where(eq(customers.id, order.customerId)),
+    );
+  }
+
+  // Reverse driver credit for delivered orders whose money has NOT been
+  // settled. Before this, deleting a delivered order left totalDelivered,
+  // totalEarnings and pendingCash permanently inflated — and unsettleable
+  // phantom cash (the order no longer appears in the pending list).
+  // Orders already linked to a payment keep the driver counters alone:
+  // the payment row is append-only history and must stay reconciled.
+  if (order && order.driverId && order.status === "delivered" && order.codPaymentId === null) {
+    statements.push(
+      db
+        .update(drivers)
+        .set({
+          totalDelivered: sql`MAX(0, ${drivers.totalDelivered} - 1)`,
+          totalEarnings: sql`MAX(0, ${drivers.totalEarnings} - ${order.driverFee ?? 0})`,
+          pendingCash: sql`MAX(0, ${drivers.pendingCash} - ${order.codAmount ?? 0})`,
+          updatedAt: now,
+        })
+        .where(eq(drivers.id, order.driverId)),
+    );
   }
 
   // Restore inventory for products that track inventory
@@ -763,14 +831,15 @@ export async function deleteOrder(db: AppDb, orderId: string) {
       const qtyBefore = variantRow?.inventory ?? 0;
       const qtyAfter = qtyBefore + remaining;
 
-      await db
-        .update(productVariants)
-        .set({ inventory: qtyAfter, updatedAt: now })
-        .where(eq(productVariants.id, op.variantId));
+      statements.push(
+        db
+          .update(productVariants)
+          .set({ inventory: qtyAfter, updatedAt: now })
+          .where(eq(productVariants.id, op.variantId)),
+      );
 
-      await db
-        .insert(stockMovements)
-        .values({
+      statements.push(
+        db.insert(stockMovements).values({
           id: crypto.randomUUID(),
           productId: op.productId,
           variantId: op.variantId,
@@ -783,10 +852,8 @@ export async function deleteOrder(db: AppDb, orderId: string) {
           createdBy: "system",
           createdByName: "النظام",
           createdAt: now,
-        })
-        .catch((err) =>
-          console.error("[stock] Failed to log ORDER_CANCELLED movement:", err),
-        );
+        }),
+      );
     } else {
       // Restore product inventory
       const productInventoryRow = await db
@@ -798,14 +865,15 @@ export async function deleteOrder(db: AppDb, orderId: string) {
       const qtyBefore = productInventoryRow?.inventory ?? 0;
       const qtyAfter = qtyBefore + remaining;
 
-      await db
-        .update(products)
-        .set({ inventory: qtyAfter, updatedAt: now })
-        .where(eq(products.id, op.productId));
+      statements.push(
+        db
+          .update(products)
+          .set({ inventory: qtyAfter, updatedAt: now })
+          .where(eq(products.id, op.productId)),
+      );
 
-      await db
-        .insert(stockMovements)
-        .values({
+      statements.push(
+        db.insert(stockMovements).values({
           id: crypto.randomUUID(),
           productId: op.productId,
           variantId: null,
@@ -818,17 +886,28 @@ export async function deleteOrder(db: AppDb, orderId: string) {
           createdBy: "system",
           createdByName: "النظام",
           createdAt: now,
-        })
-        .catch((err) =>
-          console.error("[stock] Failed to log ORDER_CANCELLED movement:", err),
-        );
+        }),
+      );
     }
   }
 
-  // Delete related records (cascade will handle orderStatusHistory and reviews)
-  await db.delete(companyShipments).where(eq(companyShipments.orderId, orderId));
-  await db.delete(orderProducts).where(eq(orderProducts.orderId, orderId));
-  await db.delete(orders).where(eq(orders.id, orderId));
+  // Delete related records. company_api_logs and webhook_events reference
+  // orders(id) with ON DELETE no action — they must be removed explicitly or
+  // the final orders delete fails the FOREIGN KEY constraint. Reviews and
+  // order_status_history cascade at the database level.
+  statements.push(
+    db.delete(companyApiLogs).where(eq(companyApiLogs.orderId, orderId)),
+    db.delete(webhookEvents).where(eq(webhookEvents.orderId, orderId)),
+    db.delete(companyShipments).where(eq(companyShipments.orderId, orderId)),
+    db.delete(orderProducts).where(eq(orderProducts.orderId, orderId)),
+    db.delete(orders).where(eq(orders.id, orderId)),
+  );
+
+  // Atomic: stats, restock, and deletes commit together or not at all.
+  // Without the batch, a mid-sequence failure left a gutted order behind
+  // (lines deleted, stats decremented, inventory restocked) while the
+  // order row itself survived.
+  await db.batch(statements as [BatchStatement, ...BatchStatement[]]);
 }
 
 // ─── Webhook Status Update ────────────────────────────────────────────────────

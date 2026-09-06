@@ -89,6 +89,7 @@ describe("adjustStock - Error Scenarios", () => {
 
       const params = {
         ...validParams,
+        type: "ADJUSTMENT_REMOVE" as const,
         delta: -10, // Trying to deduct 10 when only 5 available
       };
 
@@ -131,6 +132,7 @@ describe("adjustStock - Error Scenarios", () => {
 
       const params = {
         ...validParams,
+        type: "ADJUSTMENT_REMOVE" as const,
         variantId,
         delta: -5, // Trying to deduct 5 when only 3 available
       };
@@ -160,6 +162,7 @@ describe("adjustStock - Error Scenarios", () => {
 
       const params = {
         ...validParams,
+        type: "ADJUSTMENT_REMOVE" as const,
         delta: -5, // This should work (5 - 5 = 0)
       };
 
@@ -177,6 +180,7 @@ describe("adjustStock - Error Scenarios", () => {
 
       const params = {
         ...validParams,
+        type: "ADJUSTMENT_REMOVE" as const,
         delta: -6, // This should fail (5 - 6 = -1)
       };
 
@@ -229,6 +233,7 @@ describe("adjustStock - Error Scenarios", () => {
 
       const params = {
         ...validParams,
+        type: "ADJUSTMENT_REMOVE" as const,
         delta: -5,
       };
 

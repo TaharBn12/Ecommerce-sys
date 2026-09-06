@@ -234,6 +234,16 @@ describe("Error Middleware", () => {
       );
     });
 
+    it("should never leak raw message content for unknown errors", () => {
+      const error = new Error("Failed query: delete from \"orders\" where \"orders\".\"id\" = ?");
+
+      const context = createMockContext();
+      errorHandler(error, context);
+
+      const callArgs = (context.json as any).mock.calls[0][0];
+      expect(callArgs.error).toBe("An unexpected error occurred");
+    });
+
     it("should sanitize error messages with sensitive information", () => {
       const error = new Error("API key abc123 is invalid");
 
@@ -303,14 +313,14 @@ describe("Error Middleware", () => {
       expect(callArgs.context).toEqual({ customerId: "123" });
     });
 
-    it("should not include context field when not available", () => {
+    it("should include a requestId in context for unknown errors", () => {
       const error = new Error("Generic error");
 
       const context = createMockContext();
       errorHandler(error, context);
 
       const callArgs = (context.json as any).mock.calls[0][0];
-      expect(callArgs.context).toBeUndefined();
+      expect(callArgs.context).toEqual({ requestId: expect.any(String) });
     });
   });
 

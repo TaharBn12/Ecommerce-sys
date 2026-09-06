@@ -1,7 +1,9 @@
 import { eq, and, like, or, sum, isNull, sql, inArray, getTableColumns } from "drizzle-orm";
-import { products, productCategories, productVariants, productImages, reviews } from "../db/schema";
+import { products, productCategories, productVariants, productImages, reviews, stockMovements } from "../db/schema";
 import type { AppDb } from "../db/client";
 import { safeLikeTerm } from "./search";
+
+type BatchStatement = Parameters<AppDb["batch"]>[0][number];
 
 export interface VariantOption {
   name: string;
@@ -256,7 +258,43 @@ export async function updateProduct(db: AppDb, productId: string, data: UpdatePr
   if (data.storeFeatured !== undefined) updates.storeFeatured = data.storeFeatured;
   if (data.shippingProfileId !== undefined) updates.shippingProfileId = data.shippingProfileId ?? null;
 
-  await db.update(products).set(updates).where(eq(products.id, productId));
+  const statements: BatchStatement[] = [
+    db.update(products).set(updates).where(eq(products.id, productId)),
+  ];
+
+  // Simple-product inventory edits are manual adjustments — log them so the
+  // movement ledger keeps reconciling to real stock. Variant products keep
+  // their stock on variants; parent inventory is not ledger material.
+  if (data.inventory !== undefined) {
+    const current = await db
+      .select({ inventory: products.inventory, hasVariants: products.hasVariants, trackInventory: products.trackInventory })
+      .from(products)
+      .where(eq(products.id, productId))
+      .get();
+    if (current?.trackInventory && !current.hasVariants) {
+      const delta = data.inventory - current.inventory;
+      if (delta !== 0) {
+        statements.push(
+          db.insert(stockMovements).values({
+            id: crypto.randomUUID(),
+            productId,
+            variantId: null,
+            type: delta > 0 ? "ADJUSTMENT_ADD" : "ADJUSTMENT_REMOVE",
+            delta,
+            qtyBefore: current.inventory,
+            qtyAfter: data.inventory,
+            reason: "Product inventory edited",
+            reference: null,
+            createdBy: "system",
+            createdByName: "النظام",
+            createdAt: new Date().toISOString(),
+          }),
+        );
+      }
+    }
+  }
+
+  await db.batch(statements as [BatchStatement, ...BatchStatement[]]);
   return buildProductDetail(db, productId);
 }
 

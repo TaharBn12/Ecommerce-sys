@@ -126,6 +126,32 @@ export function DriverDetail({ driverId }: { driverId: string }) {
         </Alert>
       )}
       <DriverProfileHeader driver={driver} />
+      {driver.cashReconciliation && driver.cashReconciliation.drift !== 0 && (
+        <Alert role="alert" tone="warning">
+          <AlertCircle size={18} className="shrink-0" />
+          <span className="flex-1">
+            {t("driver_card.cash_drift_warning")
+              .replace(
+                "{pending}",
+                formatDeliveryMoney(driver.cashReconciliation.pendingCash, locale),
+              )
+              .replace(
+                "{orders}",
+                formatDeliveryMoney(
+                  driver.cashReconciliation.pendingOrdersTotal,
+                  locale,
+                ),
+              )
+              .replace(
+                "{drift}",
+                formatDeliveryMoney(
+                  Math.abs(driver.cashReconciliation.drift),
+                  locale,
+                ),
+              )}
+          </span>
+        </Alert>
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <StatCard
           label={t("driver_card.active_orders")}

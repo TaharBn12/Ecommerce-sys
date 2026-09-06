@@ -177,16 +177,21 @@ describe("updateDriverStatus", () => {
   });
 
   it("succeeds for an existing driver", async () => {
-    // getDriverById(1): drivers.get + compStats.get + orders.all
+    // getDriverById(1): drivers.get + compStats.get + [orders.all +
+    //   reconciliation: pendingCash.get + pending aggregate.get]
     // UPDATE drivers (run — no queue consumption)
-    // getDriverById(2): drivers.get + compStats.get + orders.all
+    // getDriverById(2): same five reads
     const db = makeMockDb([
       f(driverRow()),
       f({ c: 0, totalFee: 0 }),
       a([]),
+      f({ pending_cash: 0 }),
+      f({ total: 0, c: 0 }),
       f(driverRow({ status: "busy" })),
       f({ c: 0, totalFee: 0 }),
       a([]),
+      f({ pending_cash: 0 }),
+      f({ total: 0, c: 0 }),
     ]);
     const result = await updateDriverStatus(db, "drv_1", "busy");
     expect(result).not.toBeNull();
