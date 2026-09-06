@@ -59,7 +59,7 @@ Terms owned by neighboring contexts — use them, don't redefine them here:
 
 **No blueprint police**: Creating `{"Material": "Gold"}` on a product whose declared options only list Color succeeds silently — drift between options and real variants is possible.
 
-**SKU collisions crash late**: Duplicate SKUs surface as raw database constraint errors rather than friendly conflicts, because uniqueness is delegated entirely to the schema.
+**SKU collisions fail friendly**: Duplicate SKUs are caught by a pre-check (and a defensive constraint mapping for races) and rejected as a 409 Conflict carrying the offending SKU — the same treatment product creation gets.
 
 **Parent existence is assumed**: Creating a variant against a nonexistent product fails at the foreign-key level, not with a clean not-found message.
 

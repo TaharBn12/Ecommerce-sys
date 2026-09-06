@@ -144,9 +144,10 @@ describe("getVariantById", () => {
 
 describe("createVariant", () => {
   it("creates and returns the new variant", async () => {
-    // batch INSERT (run — no queue consumption) → trackInventory check (f)
-    // → getVariantById → productVariants.get()
+    // SKU-clash pre-check (f(null) — no clash) → batch INSERT (run — no
+    // queue consumption) → trackInventory check (f) → getVariantById (f)
     const db = makeMockDb([
+      f(null),
       f({ track_inventory: 1 }),
       f(variantRow({ product_id: "prod_1" })),
     ]);
@@ -164,7 +165,10 @@ describe("createVariant", () => {
   });
 
   it("serializes variations to JSON for storage", async () => {
-    const db = makeMockDb([f(variantRow({ variations: '{"Size":"S"}' }))]);
+    const db = makeMockDb([
+      f(null),
+      f(variantRow({ variations: '{"Size":"S"}' })),
+    ]);
     const result = await createVariant(db as any, "prod_1", {
       variations: { Size: "S" },
       price: 1200,
