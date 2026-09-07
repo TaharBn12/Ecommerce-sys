@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- dev tooling: vitest 4.1.11 → 5.0.0 (with `@vitest/ui` and
+  `@vitest/coverage-v8`) across cod-server, cod-client-astro, and theme01 in
+  one coordinated bump — the single root Vite pin is unchanged (one
+  vite@8.2.2); supersedes the per-package dependabot PRs and folds in the
+  fast-uri 3.1.5 → 3.1.7 transitive bump
 - no production URLs or account identifiers in committed files: theme01's
   `COD_SERVER_URL` defaults to localhost (production deploys pass the real URL
   via `wrangler deploy --var`), security scripts default to localhost, test
