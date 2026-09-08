@@ -70,9 +70,9 @@ export const StorePixelConfigSchema = z
     testEventCode: z.string().nullable().openapi({
       description: "Meta test event code — used only while Test Mode is on. Set to null in production.",
     }),
-    conversionEvent: z.enum(["Lead", "Purchase"]).openapi({
+    conversionEvent: z.enum(["Purchase", "Purchase_Confirmed", "Purchase_Delivered", "Lead"]).openapi({
       description:
-        "Merchant-chosen conversion event: 'Lead' fires at order placement (deduplicated with the browser pixel), 'Purchase' fires at confirmed delivery.",
+        "Merchant-chosen conversion event: 'Purchase' fires immediately at checkout, 'Purchase_Confirmed' fires on order confirmation, 'Purchase_Delivered' fires on confirmed delivery, and 'Lead' fires at checkout.",
     }),
     testMode: z.boolean().openapi({
       description: "When true, Conversions API events carry test_event_code to Meta's test stream.",

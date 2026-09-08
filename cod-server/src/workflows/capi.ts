@@ -22,8 +22,8 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "@/types/env";
 import { getDb } from "@/db";
-import { orders, communes, orderProducts, stores } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { orders, communes, orderProducts, stores, capiEventLog } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
 import { getPixelConfig } from "../../../cod-shared/queries/pixel-config";
 import { sendCapiEvent, type CapiResult } from "@/lib/capi";
 import { resolveCapiDispatch } from "./capi-helpers";
@@ -50,7 +50,7 @@ function splitName(customerName: string): { firstName?: string; lastName?: strin
 
 export class CodCapiWorkflow extends WorkflowEntrypoint<Env, CodCapiParams> {
   async run(event: WorkflowEvent<CodCapiParams>, step: WorkflowStep) {
-    const { orderId, eventName, triggeredAt, eventSourceUrl } = event.payload;
+    const { orderId, eventName, triggeredAt, eventSourceUrl, triggerStatus } = event.payload;
 
     // Step 1 — fetch fresh data from D1 (never rely on stale params)
     const data = await step.do("fetch-order-and-config", async () => {
@@ -95,14 +95,58 @@ export class CodCapiWorkflow extends WorkflowEntrypoint<Env, CodCapiParams> {
 
       const pixelConfig = await getPixelConfig(db, storeRow.id);
 
+      let alreadySent = false;
+      let triggerMismatch = false;
+
+      if (eventName === "Purchase") {
+        const configMode = pixelConfig?.conversionEvent ?? "Purchase";
+        if (configMode === "Purchase" && triggerStatus !== "order_created") {
+          triggerMismatch = true;
+        } else if (configMode === "Purchase_Confirmed" && triggerStatus !== "confirmed") {
+          triggerMismatch = true;
+        } else if (
+          configMode === "Purchase_Delivered" &&
+          triggerStatus !== "delivered" &&
+          triggerStatus !== "out_for_delivery"
+        ) {
+          triggerMismatch = true;
+        }
+
+        const existingPurchase = await db
+          .select({ id: capiEventLog.id })
+          .from(capiEventLog)
+          .where(
+            and(
+              eq(capiEventLog.orderId, orderId),
+              eq(capiEventLog.eventName, "Purchase"),
+              eq(capiEventLog.status, "sent")
+            )
+          )
+          .get();
+
+        if (existingPurchase) {
+          alreadySent = true;
+        }
+      }
+
       return {
         order,
         cityName: communeRow?.name ?? null,
         postalCode: communeRow?.postalCode ?? null,
         contentIds: [...new Set(productRows.map((r) => r.productId))],
         pixelConfig,
+        alreadySent,
+        triggerMismatch,
       };
     });
+
+    if (data.triggerMismatch) {
+      return { skipped: true, reason: "trigger_mismatch" };
+    }
+
+    if (data.alreadySent) {
+      return { skipped: true, reason: "purchase_already_sent" };
+    }
 
     // Step 2 — gate: merchant must have chosen this event, with a token, tracking on
     const dispatch = resolveCapiDispatch(data.pixelConfig, eventName);

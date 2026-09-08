@@ -45,7 +45,7 @@ const pixelConfigSchema = z.object({
   adAccountName: z.string().max(200).nullable().optional(),
   accessToken: z.string().default(""),
   testEventCode: z.string().nullable().optional(),
-  conversionEvent: z.enum(["Lead", "Purchase"]),
+  conversionEvent: z.enum(["Purchase", "Purchase_Confirmed", "Purchase_Delivered", "Lead"]),
   testMode: z.boolean().optional(),
   enabled: z.boolean().optional(),
 });

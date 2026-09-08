@@ -13,6 +13,10 @@ const LONG_HAUL_WILAYA_IDS = new Set([
  * Determines whether to trigger CodCapiWorkflow for a given status transition.
  * Call this after updateOrderStatus() resolves.
  */
+export function shouldTriggerCapiConfirmed(newStatus: string): boolean {
+  return newStatus === "confirmed";
+}
+
 export function shouldTriggerCapiPurchase(
   newStatus: string,
   wilayaId: number | null | undefined,
@@ -25,7 +29,7 @@ export function shouldTriggerCapiPurchase(
 export interface CapiDispatchConfig {
   enabled: boolean;
   accessToken: string;
-  conversionEvent: "Lead" | "Purchase";
+  conversionEvent: "Purchase" | "Purchase_Confirmed" | "Purchase_Delivered" | "Lead";
   testMode: boolean;
   testEventCode: string | null;
 }
@@ -59,7 +63,14 @@ export function resolveCapiDispatch(
       message: "No CAPI access token — configure it in Settings → Tracking",
     };
   }
-  if (config.conversionEvent !== eventName) {
+  const allowed =
+    (eventName === "Purchase" &&
+      (config.conversionEvent === "Purchase" ||
+        config.conversionEvent === "Purchase_Confirmed" ||
+        config.conversionEvent === "Purchase_Delivered")) ||
+    (eventName === "Lead" && config.conversionEvent === "Lead");
+
+  if (!allowed) {
     return {
       send: false,
       reason: "conversion-event-mismatch",

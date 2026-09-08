@@ -17,6 +17,7 @@ if (!orderNumber) {
 }
 
 const pixelId = config.pixelId ?? null;
+const conversionEvent = config.conversionEvent === "Purchase" ? "Purchase" : "Lead";
 const totalNum = total ? parseInt(total) : null;
 
 const steps = [
@@ -113,11 +114,12 @@ const steps = [
 (function() {
   if (typeof fbq !== 'function') return;
   var eventId = ${JSON.stringify(orderId)};
-  // No orderId means no server Lead mirror to deduplicate against — firing
+  // No orderId means no server mirror to deduplicate against — firing
   // with a different id would double-count the conversion. Skip instead.
   if (!eventId) return;
   var total   = ${JSON.stringify(totalNum)};
-  fbq('track', 'Lead', total ? { value: total, currency: 'DZD' } : {}, { eventID: eventId });
+  var eventName = ${JSON.stringify(conversionEvent)};
+  fbq('track', eventName, total ? { value: total, currency: 'DZD' } : {}, { eventID: eventId });
 })();
   `} />
 )}

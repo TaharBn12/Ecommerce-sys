@@ -1206,7 +1206,7 @@ export const storePixelConfig = sqliteTable("store_pixel_config", {
   /** Meta test event code — used during integration testing only. Set to null in production. */
   testEventCode: text("test_event_code"),
   /** Which CAPI event the merchant optimizes for — chosen explicitly in the dashboard, never defaulted by the UI. */
-  conversionEvent: text("conversion_event", { enum: ["Lead", "Purchase"] }).notNull().default("Purchase"),
+  conversionEvent: text("conversion_event", { enum: ["Lead", "Purchase", "Purchase_Confirmed", "Purchase_Delivered"] }).notNull().default("Purchase"),
   /** When true, CAPI events carry test_event_code to Meta's test stream instead of production measurement. */
   testMode: integer("test_mode", { mode: "boolean" }).notNull().default(false),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),

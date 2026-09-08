@@ -5,11 +5,13 @@ import { useT } from "@/i18n/react";
 import { getPixelConfig, savePixelConfig } from "@/features/settings/api";
 import { FieldRow, SettingsSection } from "@/features/settings/components/SettingsSection";
 
-type ConversionEvent = "Lead" | "Purchase";
+type ConversionEvent = "Purchase" | "Purchase_Confirmed" | "Purchase_Delivered" | "Lead";
 
 const EVENT_OPTIONS: { value: ConversionEvent; labelKey: string; hintKey: string }[] = [
+  { value: "Purchase", labelKey: "store.tracking_event_purchase_instant_label", hintKey: "store.tracking_event_purchase_instant_hint" },
+  { value: "Purchase_Confirmed", labelKey: "store.tracking_event_purchase_confirmed_label", hintKey: "store.tracking_event_purchase_confirmed_hint" },
+  { value: "Purchase_Delivered", labelKey: "store.tracking_event_purchase_delivered_label", hintKey: "store.tracking_event_purchase_delivered_hint" },
   { value: "Lead", labelKey: "store.tracking_event_lead_label", hintKey: "store.tracking_event_lead_hint" },
-  { value: "Purchase", labelKey: "store.tracking_event_purchase_label", hintKey: "store.tracking_event_purchase_hint" },
 ];
 
 export function TrackingSettings() {
