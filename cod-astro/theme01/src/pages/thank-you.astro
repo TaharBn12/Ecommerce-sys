@@ -17,7 +17,15 @@ if (!orderNumber) {
 }
 
 const pixelId = config.pixelId ?? null;
-const conversionEvent = config.conversionEvent === "Purchase" ? "Purchase" : "Lead";
+// At checkout stage, only "Purchase" (instant mode) and "Lead" (lead mode) fire on the thank-you page.
+// "Purchase_Confirmed" and "Purchase_Delivered" deliberately fire downstream via server CAPI only.
+const rawMode = config.conversionEvent ?? "Purchase";
+const checkoutEvent =
+  rawMode === "Purchase"
+    ? "Purchase"
+    : rawMode === "Lead"
+      ? "Lead"
+      : null;
 const totalNum = total ? parseInt(total) : null;
 
 const steps = [
@@ -109,7 +117,7 @@ const steps = [
   </div>
 </StoreLayout>
 
-{pixelId && (
+{pixelId && checkoutEvent && (
   <script type="text/javascript" set:html={`
 (function() {
   if (typeof fbq !== 'function') return;
@@ -118,7 +126,7 @@ const steps = [
   // with a different id would double-count the conversion. Skip instead.
   if (!eventId) return;
   var total   = ${JSON.stringify(totalNum)};
-  var eventName = ${JSON.stringify(conversionEvent)};
+  var eventName = ${JSON.stringify(checkoutEvent)};
   fbq('track', eventName, total ? { value: total, currency: 'DZD' } : {}, { eventID: eventId });
 })();
   `} />

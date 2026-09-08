@@ -98,9 +98,9 @@ beforeEach(() => {
   stubSuccessfulOrderFlow();
 });
 
-describe("CAPI Lead workflow trigger", () => {
-  it("creates a durable Lead workflow for every order, via waitUntil", async () => {
-    const workflow = { create: vi.fn(async () => ({ id: "capi-ord-1-Lead" })) };
+describe("CAPI checkout workflow trigger", () => {
+  it("creates a durable CAPI workflow for order at checkout, via waitUntil", async () => {
+    const workflow = { create: vi.fn(async () => ({ id: "capi-ord-1-checkout-Purchase" })) };
     const before = Math.floor(Date.now() / 1000);
 
     const res = await placeOrder(makeApp(workflow));
@@ -111,9 +111,10 @@ describe("CAPI Lead workflow trigger", () => {
       { id: string; params: Record<string, unknown> }
     ];
     const { id, params } = call[0];
-    expect(id).toBe("capi-ord-1-Lead");
+    expect(id).toBe("capi-ord-1-checkout-Purchase");
     expect(params.orderId).toBe("ord-1");
-    expect(params.eventName).toBe("Lead");
+    expect(params.eventName).toBe("Purchase");
+    expect(params.stage).toBe("checkout");
     expect(params.triggerStatus).toBe("order_created");
     expect(params.eventSourceUrl).toBe("https://shop.example/prod");
     expect(params.triggeredAt).toBeGreaterThanOrEqual(before);

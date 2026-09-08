@@ -69,7 +69,11 @@ export async function getStoreConfig(db: AppDb, storeId: string) {
   if (!store) return null;
   const [pixelRow, otpRow] = await Promise.all([
     db
-      .select({ pixelId: storePixelConfig.pixelId, enabled: storePixelConfig.enabled })
+      .select({
+        pixelId: storePixelConfig.pixelId,
+        enabled: storePixelConfig.enabled,
+        conversionEvent: storePixelConfig.conversionEvent,
+      })
       .from(storePixelConfig)
       .where(eq(storePixelConfig.storeId, storeId))
       .get(),
@@ -82,6 +86,7 @@ export async function getStoreConfig(db: AppDb, storeId: string) {
   return {
     ...store,
     pixelId: pixelRow?.enabled ? pixelRow.pixelId : null,
+    conversionEvent: pixelRow?.enabled ? (pixelRow.conversionEvent as "Purchase" | "Purchase_Confirmed" | "Purchase_Delivered" | "Lead") : "Purchase",
     otpEnabled: otpRow?.enabled === true,
   };
 }

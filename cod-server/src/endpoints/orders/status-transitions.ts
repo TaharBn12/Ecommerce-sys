@@ -14,7 +14,7 @@ import * as validation from "./validation";
 import { logActivity, ACTIONS } from "@/lib/activity";
 import { NotFoundError, BusinessLogicError, ValidationError } from "@/lib/errors/classes";
 import { ERROR_CODES, ERROR_CATEGORIES } from "../../../../cod-shared/errors/codes";
-import { shouldTriggerCapiPurchase, shouldTriggerCapiConfirmed } from "@/workflows/capi-helpers";
+import { shouldTriggerCapiPurchase, shouldTriggerCapiConfirmed, getCapiWorkflowId } from "@/workflows/capi-helpers";
 
 /**
  * PATCH /orders/:id/status
@@ -87,12 +87,15 @@ export async function updateStatus(c: Context<AppContext>) {
       // Re-provision the client to activate the binding.
       console.error("[capi-workflow] CAPI_WORKFLOW binding is undefined — worker needs re-provision");
     } else {
+      const stage = isConfirmedTrigger ? "confirmed" : "delivered";
+      const workflowId = getCapiWorkflowId(orderId, stage, "Purchase");
       c.executionCtx.waitUntil(
         c.env.CAPI_WORKFLOW.create({
-          id: `capi-${orderId}-Purchase-${validated.status}`,
+          id: workflowId,
           params: {
             orderId,
             eventName: "Purchase",
+            stage,
             triggeredAt: Math.floor(Date.now() / 1000),
             triggerStatus: validated.status,
           },

@@ -1263,17 +1263,25 @@ export const storeEmailConfig = sqliteTable("store_email_config", {
  * status: 'sent' | 'failed' | 'skipped'
  * metaEventId: fbtrace_id from Meta response (present on success only).
  */
-export const capiEventLog = sqliteTable("capi_event_log", {
-  id: text("id").primaryKey(),
-  orderId: text("order_id")
-    .notNull()
-    .references(() => orders.id),
-  eventName: text("event_name").notNull(),
-  status: text("status").notNull(),
-  metaEventId: text("meta_event_id"),
-  error: text("error"),
-  sentAt: text("sent_at").notNull(),
-});
+export const capiEventLog = sqliteTable(
+  "capi_event_log",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id),
+    eventName: text("event_name").notNull(),
+    stage: text("stage").notNull().default("delivered"),
+    status: text("status").notNull(),
+    metaEventId: text("meta_event_id"),
+    error: text("error"),
+    sentAt: text("sent_at").notNull(),
+  },
+  (t) => ({
+    orderIdx: index("idx_capi_event_log_order").on(t.orderId),
+    claimUnique: uniqueIndex("idx_capi_event_log_claim").on(t.orderId, t.stage, t.eventName),
+  })
+);
 
 // ─── better-auth tables ──────────────────────────────────────────────────────
 // Declared so the dashboard's auth code can reference them via Drizzle. The D1

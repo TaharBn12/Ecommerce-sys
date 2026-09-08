@@ -27,6 +27,9 @@ import type { AppDb } from "@/db";
 vi.mock("@/db", () => ({ getDb: vi.fn(() => realDb) }));
 vi.mock("@/workflows/capi-helpers", () => ({
   shouldTriggerCapiPurchase: vi.fn(() => false),
+  shouldTriggerCapiConfirmed: vi.fn(() => false),
+  getCapiWorkflowId: vi.fn((id: string, stage: string, event: string) => `capi-${id}-${stage}-${event}`),
+  resolveConversionForStage: vi.fn(() => ({ shouldFire: false })),
   resolveCapiDispatch: vi.fn(() => ({ send: false, reason: "tracking-disabled", message: "mock skip" })),
 }));
 

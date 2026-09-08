@@ -6,6 +6,10 @@ import { storeOrderSchema, storeReviewSchema } from "./validation";
 import { NotFoundError, ValidationError, ConflictError, BusinessLogicError } from "@/lib/errors/classes";
 import { ERROR_CODES } from "../../../../cod-shared/errors/codes";
 import { assertOtpVerification } from "./otp-gate";
+import { getPixelConfig } from "../../../../cod-shared/queries/pixel-config";
+import { resolveConversionForStage, getCapiWorkflowId } from "@/workflows/capi-helpers";
+import { stores } from "../../../../cod-shared/db/schema";
+import { eq } from "drizzle-orm";
 
 export async function getStoreConfig(c: Context<AppContext>) {
   const storeId = c.get("storeId")!;
@@ -203,26 +207,62 @@ export async function createStoreOrder(c: Context<AppContext>) {
     userAgent,
   });
 
-  // CAPI Lead event — durable Workflow (same path as Purchase). waitUntil:
-  // the Workers runtime cancels un-awaited promises once the response is
-  // sent, which would silently drop the workflow creation. The workflow
-  // gates on the merchant's conversion-event choice, retries Meta 5xx, and
-  // audit-logs every outcome. A failure can never block order confirmation.
+  // Meta CAPI conversion event at checkout — evaluated against merchant's tracking mode.
+  // When mode is instant "Purchase", sends Purchase (matching the thank-you Pixel).
+  // When mode is "Lead", sends Lead (matching the thank-you Pixel).
+  // When mode is "Purchase_Confirmed" or "Purchase_Delivered", skips at checkout
+  // and fires down-funnel via server CAPI.
   if (c.env.CAPI_WORKFLOW) {
-    c.executionCtx.waitUntil(
-      c.env.CAPI_WORKFLOW.create({
-        id: `capi-${order.id}-Lead`,
-        params: {
-          orderId: order.id,
-          eventName: "Lead",
-          triggeredAt: Math.floor(Date.now() / 1000),
-          triggerStatus: "order_created",
-          eventSourceUrl: c.req.header("Referer") ?? undefined,
-        },
-      }).catch((err: unknown) =>
-        console.error("[capi-workflow] lead trigger failed:", (err as Error)?.message)
-      )
-    );
+    try {
+      const storeId = c.get("storeId");
+      const pixelConfig =
+        storeId && typeof db.select === "function"
+          ? await getPixelConfig(db, storeId)
+          : undefined;
+      const decision = resolveConversionForStage(pixelConfig?.conversionEvent, "checkout");
+
+      if (decision.shouldFire && decision.eventName) {
+        let storeRow: { domain: string | null } | undefined = undefined;
+        if (storeId && typeof db.select === "function") {
+          storeRow = await db
+            .select({ domain: stores.domain })
+            .from(stores)
+            .where(eq(stores.id, storeId))
+            .get();
+        }
+
+        let eventSourceUrl: string | undefined = storeRow?.domain
+          ? `https://${storeRow.domain}/thank-you`
+          : undefined;
+
+        if (!eventSourceUrl) {
+          const referer = c.req.header("Referer");
+          if (referer && (referer.startsWith("http://") || referer.startsWith("https://"))) {
+            eventSourceUrl = referer;
+          }
+        }
+
+        const workflowId = getCapiWorkflowId(order.id, "checkout", decision.eventName);
+
+        c.executionCtx.waitUntil(
+          c.env.CAPI_WORKFLOW.create({
+            id: workflowId,
+            params: {
+              orderId: order.id,
+              eventName: decision.eventName,
+              stage: "checkout",
+              triggeredAt: Math.floor(Date.now() / 1000),
+              triggerStatus: "order_created",
+              eventSourceUrl,
+            },
+          }).catch((err: unknown) =>
+            console.error(`[capi-workflow] checkout ${decision.eventName} trigger failed:`, (err as Error)?.message)
+          )
+        );
+      }
+    } catch (err) {
+      console.error("[capi-workflow] checkout evaluation failed:", (err as Error)?.message);
+    }
   } else {
     console.error("[capi-workflow] CAPI_WORKFLOW binding is undefined — worker needs re-provision");
   }

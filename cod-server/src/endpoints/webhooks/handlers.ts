@@ -41,7 +41,7 @@ function isOrderStatus(value: string): value is (typeof ORDER_STATUSES)[number] 
 
 /** Terminal order statuses — late carrier events never modify these orders. */
 const TERMINAL_ORDER_STATUSES = new Set<OrderStatus>(["delivered", "returned", "cancelled"]);
-import { shouldTriggerCapiPurchase } from "@/workflows/capi-helpers";
+import { shouldTriggerCapiPurchase, getCapiWorkflowId } from "@/workflows/capi-helpers";
 
 // ─── ZR Express ───────────────────────────────────────────────────────────────
 
@@ -206,8 +206,14 @@ export async function handleZrWebhook(c: Context<AppContext>) {
         } else {
           c.executionCtx.waitUntil(
             c.env.CAPI_WORKFLOW.create({
-              id: `capi-${resolvedOrder.id}-Purchase`,
-              params: { orderId: resolvedOrder.id, eventName: "Purchase", triggeredAt: Math.floor(Date.now() / 1000), triggerStatus: newStatus },
+              id: getCapiWorkflowId(resolvedOrder.id, "delivered", "Purchase"),
+              params: {
+                orderId: resolvedOrder.id,
+                eventName: "Purchase",
+                stage: "delivered",
+                triggeredAt: Math.floor(Date.now() / 1000),
+                triggerStatus: newStatus,
+              },
             }).catch((err: unknown) => console.error("[capi-workflow] zr trigger failed:", (err as Error)?.message))
           );
         }
@@ -450,8 +456,14 @@ export async function handleYalidineWebhook(c: Context<AppContext>) {
         } else {
           c.executionCtx.waitUntil(
             c.env.CAPI_WORKFLOW.create({
-              id: `capi-${order.id}-Purchase`,
-              params: { orderId: order.id, eventName: "Purchase", triggeredAt: Math.floor(Date.now() / 1000), triggerStatus: nextStatus },
+              id: getCapiWorkflowId(order.id, "delivered", "Purchase"),
+              params: {
+                orderId: order.id,
+                eventName: "Purchase",
+                stage: "delivered",
+                triggeredAt: Math.floor(Date.now() / 1000),
+                triggerStatus: nextStatus,
+              },
             }).catch((err: unknown) => console.error("[capi-workflow] yalidine trigger failed:", (err as Error)?.message))
           );
         }
