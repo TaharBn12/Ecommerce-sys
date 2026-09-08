@@ -109,6 +109,16 @@ export {
   PresignedUploadSchema,
 } from "./schemas/products";
 
+// ─── Landing Pages ────────────────────────────────────────────────────────────
+
+export {
+  LandingPageStatusEnum,
+  LandingPageStatsSchema,
+  LandingPageImageSchema,
+  LandingPageSchema,
+  LandingPageListItemSchema,
+} from "./schemas/landing-pages";
+
 // ─── Store & Storefront ───────────────────────────────────────────────────────
 
 export {
@@ -119,6 +129,7 @@ export {
   StoreProductListSchema,
   StoreOfferSummarySchema,
   StoreProductDetailSchema,
+  StoreLandingPageSchema,
   StoreConfigSchema,
 } from "./schemas/store";
 

@@ -120,6 +120,12 @@ export const SCOPES = {
   /** Update status and delete abandoned order records */
   ABANDONED_ORDERS_MANAGE: "abandoned_orders:manage",
 
+  // Landing Pages
+  /** View landing pages list, stats, and comparison view */
+  LANDING_PAGES_READ: "landing_pages:read",
+  /** Create, edit, publish, and delete landing pages */
+  LANDING_PAGES_MANAGE: "landing_pages:manage",
+
   // MCP (remote AI agents via Model Context Protocol)
   /**
    * Access the /mcp page to view and manage your OWN connected AI apps
@@ -220,6 +226,10 @@ export const SCOPE_CATEGORIES = {
   abandonedOrders: {
     label: "Abandoned Orders",
     scopes: [SCOPES.ABANDONED_ORDERS_READ, SCOPES.ABANDONED_ORDERS_MANAGE],
+  },
+  landingPages: {
+    label: "Landing Pages",
+    scopes: [SCOPES.LANDING_PAGES_READ, SCOPES.LANDING_PAGES_MANAGE],
   },
   mcp: {
     label: "AI Agents (MCP)",

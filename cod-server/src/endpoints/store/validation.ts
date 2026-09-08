@@ -61,6 +61,13 @@ export const storeOrderSchema = z.object({
     },
     z.array(variantSelectionSchema).optional()
   ),
+  // Landing page attribution — best-effort. An unknown/draft/archived slug
+  // leaves the order unattributed and the order still succeeds (revenue
+  // first, attribution second).
+  landingPageSlug: z.preprocess(
+    (v) => (v === "" || v == null ? undefined : v),
+    z.string().min(1).max(60).optional()
+  ),
 });
 
 export type StoreOrderInput = z.infer<typeof storeOrderSchema>;

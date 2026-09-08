@@ -4,6 +4,8 @@
     "name": "Algerian Dinar",
     "per_meter": "DA/m"
   },
+  "move_up": "Move up",
+  "move_down": "Move down",
   "roles": {
     "admin": "Admin",
     "staff": "Staff"

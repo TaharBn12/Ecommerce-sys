@@ -4,6 +4,8 @@
     "name": "Dinar algérien",
     "per_meter": "DA/m"
   },
+  "move_up": "Monter",
+  "move_down": "Descendre",
   "roles": {
     "admin": "Admin",
     "staff": "Personnel"

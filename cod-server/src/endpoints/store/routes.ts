@@ -16,6 +16,7 @@ import {
   StoreConfigSchema,
   StoreProductListSchema,
   StoreProductDetailSchema,
+  StoreLandingPageSchema,
   ProductCategoryRowSchema,
   SuccessResponseSchema,
 } from "@/openapi/schemas";
@@ -47,6 +48,10 @@ const productsQuerySchema = z.object({
 
 const handleParams = z.object({
   handle: z.string().openapi({ example: "samsung-galaxy-a54" }),
+});
+
+const lpSlugParams = z.object({
+  slug: z.string().openapi({ example: "lp-9f3a2b1c" }),
 });
 
 const wilayaIdParams = z.object({
@@ -131,6 +136,26 @@ const getStoreProductRoute = defineRoute({
     },
   },
   handler: h.getStoreProduct,
+});
+
+const getStoreLandingPageRoute = defineRoute({
+  method: "get",
+  path: "/landing-pages/{slug}",
+  auth: "store",
+  tags: ["Store API"],
+  summary: "Get published landing page",
+  description:
+    "Get a published landing page by its public slug: the ordered image stack, spacing settings, and the linked product in its full store-product shape (variants, offers, inventory) so the storefront order form works unmodified. Draft/archived/unknown slugs return 404. Each successful GET increments the page's view counter (non-unique in v1).",
+  operationId: "getStoreLandingPage",
+  params: lpSlugParams,
+  responses: {
+    200: {
+      description: "Published landing page with its product",
+      content: jsonContent(SuccessResponseSchema(StoreLandingPageSchema)),
+    },
+    404: { description: "Landing page not found, draft, or archived" },
+  },
+  handler: h.getStoreLandingPage,
 });
 
 const listStoreCategoriesRoute = defineRoute({
@@ -327,6 +352,7 @@ const router = new OpenAPIHono<AppContext>();
 router.openapi(getStoreConfigRoute.route, getStoreConfigRoute.handler);
 router.openapi(listStoreProductsRoute.route, listStoreProductsRoute.handler);
 router.openapi(getStoreProductRoute.route, getStoreProductRoute.handler);
+router.openapi(getStoreLandingPageRoute.route, getStoreLandingPageRoute.handler);
 router.openapi(listStoreCategoriesRoute.route, listStoreCategoriesRoute.handler);
 router.openapi(getShippingRatesRoute.route, getShippingRatesRoute.handler);
 router.openapi(communesRoute.route, communesRoute.handler);

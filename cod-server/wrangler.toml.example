@@ -65,6 +65,9 @@ crons = ["0 * * * *"]
 # Local dev defaults work out of the box. For a deployed worker, replace the
 # URLs with your own public domains:
 #   WORKER_URL       → https://api.yourdomain.com      (your Worker's public URL)
+#   STOREFRONT_URL   → https://store.yourdomain.com    (optional fallback for landing
+#                      page share URLs when the merchant hasn't set their store domain
+#                      in Store Settings yet)
 #   MEDIA_DOMAIN     → media.yourdomain.com            (domain fronting your R2 bucket)
 #   BETTER_AUTH_URL  → https://dashboard.yourdomain.com/api/auth (the dashboard
 #                       Worker's Better Auth origin — JWT issuer verified here)
@@ -84,7 +87,7 @@ ALLOWED_ORIGINS = "*"
 # Deploy with `wrangler deploy --env production` after editing the values.
 # IMPORTANT: Set ALLOWED_ORIGINS to your actual dashboard and storefront domains.
 [env.production]
-vars = { ENVIRONMENT = "production", WORKER_URL = "https://api.example.com", MEDIA_DOMAIN = "media.example.com", R2_BUCKET_NAME = "codflow-images", BETTER_AUTH_URL = "https://dashboard.example.com/api/auth", WORKER_SELF_URL = "https://api.example.com/", ALLOWED_ORIGINS = "https://dashboard.example.com,https://store.example.com" }
+vars = { ENVIRONMENT = "production", WORKER_URL = "https://api.example.com", MEDIA_DOMAIN = "media.example.com", R2_BUCKET_NAME = "codflow-images", BETTER_AUTH_URL = "https://dashboard.example.com/api/auth", WORKER_SELF_URL = "https://api.example.com/", ALLOWED_ORIGINS = "https://dashboard.example.com,https://store.example.com", STOREFRONT_URL = "https://store.example.com" }
 
 [[env.production.r2_buckets]]
 binding = "IMAGES"

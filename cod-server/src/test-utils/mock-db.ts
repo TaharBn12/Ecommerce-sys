@@ -221,6 +221,7 @@ export function orderRow(overrides: Record<string, unknown> = {}): Record<string
     fbp: null,
     ip_address: null,
     user_agent: null,
+    landing_page_id: null,
     created_at: NOW,
     updated_at: NOW,
     ...overrides,

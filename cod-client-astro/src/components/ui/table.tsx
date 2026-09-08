@@ -48,6 +48,11 @@ export function TableRow({
   );
 }
 
+// Tailwind has no class merging here — when a caller passes an explicit
+// text-align utility it must replace the start default, not race it in the
+// stylesheet (that race misaligned headers vs cells on every table).
+const HAS_EXPLICIT_ALIGN = /\btext-(start|end|center|left|right)\b/;
+
 export function TableHead({
   className = "",
   ...props
@@ -56,7 +61,7 @@ export function TableHead({
     <th
       scope="col"
       {...props}
-      className={`px-4 py-2.5 text-start font-semibold align-middle ${className}`}
+      className={`px-4 py-2.5 ${HAS_EXPLICIT_ALIGN.test(className) ? "" : "text-start"} font-semibold align-middle ${className}`}
     />
   );
 }

@@ -5,6 +5,7 @@ import { DRIVER_PAYMENT_TOOL_SCHEMAS } from "@/endpoints/driver-payments/ai-tool
 import { PRODUCT_TOOL_SCHEMAS } from "@/endpoints/products/ai-tools";
 import { PRODUCT_GROUP_TOOL_SCHEMAS } from "@/endpoints/product-groups/ai-tools";
 import { OFFER_TOOL_SCHEMAS } from "@/endpoints/offers/ai-tools";
+import { LANDING_PAGE_TOOL_SCHEMAS } from "@/endpoints/landing-pages/ai-tools";
 import { VARIANT_TOOL_SCHEMAS } from "@/endpoints/variants/ai-tools";
 import { WILAYA_TOOL_SCHEMAS } from "@/endpoints/wilayas/ai-tools";
 import { STOCK_TOOL_SCHEMAS } from "@/endpoints/stock/ai-tools";
@@ -28,6 +29,7 @@ const SCHEMA_SOURCES: Record<string, z.ZodRawShape>[] = [
   PRODUCT_TOOL_SCHEMAS,
   PRODUCT_GROUP_TOOL_SCHEMAS,
   OFFER_TOOL_SCHEMAS,
+  LANDING_PAGE_TOOL_SCHEMAS,
   VARIANT_TOOL_SCHEMAS,
   WILAYA_TOOL_SCHEMAS,
   STOCK_TOOL_SCHEMAS,

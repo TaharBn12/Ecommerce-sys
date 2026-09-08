@@ -32,6 +32,9 @@ export const DANGEROUS_TOOLS: ReadonlySet<string> = new Set<string>([
   // Offers — destructive
   "deleteOffer",
 
+  // Landing pages — destructive (refuses with attributed orders, but still irreversible without)
+  "deleteLandingPage",
+
   // Variants — destructive
   "deleteProductVariant",
 

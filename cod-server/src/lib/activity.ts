@@ -54,6 +54,14 @@ export const ACTIONS = {
   PRODUCT_STATUS_CHANGED:  "product.status_changed",
   PRODUCT_DELETED:         "product.deleted",
 
+  // Landing Pages
+  LANDING_PAGE_CREATED:    "landing_page.created",
+  LANDING_PAGE_UPDATED:    "landing_page.updated",
+  LANDING_PAGE_PUBLISHED:  "landing_page.published",
+  LANDING_PAGE_UNPUBLISHED: "landing_page.unpublished",
+  LANDING_PAGE_ARCHIVED:   "landing_page.archived",
+  LANDING_PAGE_DELETED:    "landing_page.deleted",
+
   // Stock
   STOCK_ADJUSTED:          "stock.adjusted",
 

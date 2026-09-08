@@ -40,6 +40,7 @@ import { getDriverPaymentTools } from "@/endpoints/driver-payments/ai-tools";
 import { getProductTools }       from "@/endpoints/products/ai-tools";
 import { getProductGroupTools }  from "@/endpoints/product-groups/ai-tools";
 import { getOfferTools }         from "@/endpoints/offers/ai-tools";
+import { getLandingPageTools }  from "@/endpoints/landing-pages/ai-tools";
 import { getVariantTools }       from "@/endpoints/variants/ai-tools";
 import { getWilayaTools }        from "@/endpoints/wilayas/ai-tools";
 import { getStockTools }         from "@/endpoints/stock/ai-tools";
@@ -207,6 +208,25 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
       "createOffer",
       "updateOffer",
       "deleteOffer",
+    ]),
+  },
+
+  // ─── Landing Pages ────────────────────────────────────────────────────────
+  {
+    requires: [SCOPES.LANDING_PAGES_READ],
+    build: (db) => pick(getLandingPageTools(db), [
+      "listLandingPages",
+      "getLandingPageDetails",
+      "getLandingPageStats",
+    ]),
+  },
+  {
+    requires: [SCOPES.LANDING_PAGES_MANAGE],
+    build: (db) => pick(getLandingPageTools(db), [
+      "createLandingPage",
+      "updateLandingPage",
+      "publishLandingPage",
+      "deleteLandingPage",
     ]),
   },
 

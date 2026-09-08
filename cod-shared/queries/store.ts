@@ -56,6 +56,8 @@ export interface StoreOrderData {
   notes?: string;
   offerId?: string;
   variantSelections?: Array<{ variantId: string; variantLabel?: string }>;
+  /** Resolved landing page id — set by the caller from landingPageSlug (best-effort). */
+  landingPageId?: string | null;
   fbc?: string;
   fbp?: string;
   ipAddress?: string;
@@ -951,6 +953,7 @@ export async function createStoreOrder(
       fbp: data.fbp ?? null,
       ipAddress: data.ipAddress ?? null,
       userAgent: data.userAgent ?? null,
+      landingPageId: data.landingPageId ?? null,
       createdAt: now,
       updatedAt: now,
     }),

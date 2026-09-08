@@ -57,6 +57,11 @@ export const ERROR_CODES = {
   MISSING_WILAYA_COMMUNE: "MISSING_WILAYA_COMMUNE",
   MISSING_STATION_CODE: "MISSING_STATION_CODE",
   INSUFFICIENT_STOCK: "INSUFFICIENT_STOCK",
+
+  // ============================================================================
+  // BUSINESS LOGIC ERRORS - LANDING PAGES
+  // ============================================================================
+  LANDING_PAGE_HAS_ORDERS: "LANDING_PAGE_HAS_ORDERS",
   
   // ============================================================================
   // BUSINESS LOGIC ERRORS - PRODUCTS

@@ -79,6 +79,24 @@ export async function fetchProductByHandle(handle: string): Promise<any | null> 
   }
 }
 
+/**
+ * Fetch a published landing page by its public slug: the ordered image stack,
+ * spacing settings, and the linked product in full store-product shape.
+ * Draft/archived/unknown slugs resolve to null.
+ */
+export async function fetchLandingPageBySlug(slug: string): Promise<any | null> {
+  try {
+    const res = await fetch(`${COD_SERVER_URL}/store/landing-pages/${encodeURIComponent(slug)}`, {
+      headers: storeHeaders(),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { data: any };
+    return json.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchShippingRates(): Promise<Record<string, { home: number; stopDesk: number }>> {
   try {
     const res = await fetch(`${COD_SERVER_URL}/store/shipping-rates`, {

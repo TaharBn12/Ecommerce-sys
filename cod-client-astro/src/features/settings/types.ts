@@ -30,6 +30,7 @@ export type UpdateStoreData = Partial<
   Pick<
     StoreConfig,
     | "name"
+    | "domain"
     | "logoUrl"
     | "primaryColor"
     | "accentColor"
