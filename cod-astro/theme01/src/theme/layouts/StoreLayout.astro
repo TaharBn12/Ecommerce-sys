@@ -17,9 +17,15 @@ interface Props {
   config?: StoreConfig;
   content?: StoreFrontContent;
   hideMobileNav?: boolean;
+  /** Marketing mode (landing pages): no header, no mobile nav, no footer —
+   *  the page is images + form + sticky CTA, nothing else. */
+  marketing?: boolean;
+  /** LCP images (landing page stack top) — preloaded in <head>. */
+  preloadImages?: string[];
 }
 
-const { title, description, ogImage, noindex, config: c, content, hideMobileNav = false } = Astro.props;
+const { title, description, ogImage, noindex, config: c, content, marketing = false, preloadImages } = Astro.props;
+const hideMobileNav = marketing || Astro.props.hideMobileNav;
 const config = c ?? DEFAULT_CONFIG;
 
 const isRTL = config.lang === "ar";
@@ -52,24 +58,25 @@ const fontHref = config.fontUrl?.replace(/["<>]/g, "")
     bg={bg}
     font={font}
     fontHref={fontHref}
+    preloadImages={preloadImages}
   />
 
   <body class:list={[!hideMobileNav && "has-mobile-nav"]}>
     <!-- Announcement bar -->
-    {(config.announcementBar || content?.announcementText) && (
+    {!marketing && (config.announcementBar || content?.announcementText) && (
       <div class="store-announce">
         <Icon name="heroicons:truck" class="w-3.5 h-3.5 opacity-80" />
         <span>{config.announcementBar ?? content?.announcementText}</span>
       </div>
     )}
 
-    <Header config={config} content={content} />
+    {!marketing && <Header config={config} content={content} />}
 
     <main>
       <slot />
     </main>
 
-    <Footer config={config} content={content} />
+    {!marketing && <Footer config={config} content={content} />}
 
     {!hideMobileNav && <MobileNav config={config} content={content} />}
   </body>
