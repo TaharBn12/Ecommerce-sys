@@ -1,6 +1,6 @@
 # CodFlow
 
-![CodFlow](./imgs/logo-codflow-light.svg)
+![CodFlow](./imgs/logo-codflow.svg)
 
 **The open-source, COD-first e-commerce platform for Algeria — built agentic-ready.**
 
@@ -76,6 +76,7 @@ E-commerce in Algeria is **95%+ Cash on Delivery (الدفع عند الاستل
 CodFlow v1.1.0 — here's what works today:
 
 ### Storefront (`cod-astro/theme01`)
+- ✅ **Landing pages (`/lp/[slug]`)** — one-product marketing pages: stacked image story + COD form, no nav chrome
 - ✅ Single-page COD checkout with live shipping calculation
 - ✅ Home delivery **or** carrier stop-desk pickup selection
 - ✅ Quantity-tier offers ("Buy 2 get 10% off", "Buy 3 free shipping")
@@ -89,6 +90,8 @@ CodFlow v1.1.0 — here's what works today:
 - ✅ Product catalog with multi-attribute variants (size, color, SKU) and image uploads
 - ✅ Inventory tracking with low-stock alerts and adjustment history
 - ✅ Promotion engine (Buy X Get Y, free shipping rules)
+- ✅ **Landing page studio** — two-sidebar builder (image stack + spacing), product-picker-first creation, publish flow, live link copy
+- ✅ **Landing page comparison** — per-product A/B table (views, orders, CVR, revenue) to pick winning creatives
 - ✅ Review moderation (approve, reject, delete)
 - ✅ Customer CRM with profiles, order history, groups, and tags
 - ✅ Delivery: in-house drivers, per-wilaya compensation, cash settlement
@@ -103,6 +106,9 @@ CodFlow v1.1.0 — here's what works today:
 - ✅ 4 Algerian carriers + EcoTrack (80+ couriers behind one API)
 - ✅ One-click shipment creation with printable labels
 - ✅ Real-time webhook tracking (Yalidine, ZR Express with HMAC verification)
+- ✅ Carrier delivery-zone name sync — dispatches carry the carrier's exact wilaya/commune spellings (Yalidine)
+- ✅ Dispatch-time delivery-type switching (home ⇄ stop desk) with wilaya-scoped desk picking
+- ✅ Webhook event log with per-event outcomes (applied / ignored / unmapped / error) per carrier
 - ✅ Stop-desk catalog syncing across 58 wilayas
 - ✅ In-house driver fleet management
 - ✅ Per-wilaya driver compensation with cash settlement
@@ -121,7 +127,7 @@ CodFlow v1.1.0 — here's what works today:
 ### AI & Agentic (MCP)
 - ✅ RFC 9728 OAuth Protected Resource Discovery with dynamic client registration
 - ✅ OAuth login relay from the dashboard (login-ticket bridge)
-- ✅ 14 RBAC-gated tool sets (orders, products, stock, offers, reviews, customers, drivers, etc.)
+- ✅ 15 RBAC-gated tool sets (orders, products, stock, offers, landing pages, reviews, customers, drivers, etc.)
 - ✅ Stateless elicitation with HMAC-sealed confirmation state
 - ✅ Compatible with Claude, Cursor, ChatGPT, LibreChat
 
@@ -349,6 +355,8 @@ astro check + tests for theme01.
 
 ### Recently Shipped
 
+- ✅ **Yalidine Hardening** — full 36-status webhook mapping (live-verified return flows), HMAC-SHA256 signature verification, per-carrier delivery-zone name sync, dispatch-time delivery-type switching, and a webhook events log for every webhook-capable carrier
+- ✅ **Landing Pages** — one-product marketing pages (image stack + COD order form) with the Studio builder, per-link stats, A/B comparison, order attribution, and 7 MCP tools
 - ✅ **Astro Dashboard** — the merchant dashboard now runs on Astro (was Next.js)
 - ✅ **WhatsApp OTP Verification** — [DZVerify.com](https://dzverify.com) phone verification at checkout
 - ✅ **EcoTrack Integration** — 80+ Algerian couriers behind one API
