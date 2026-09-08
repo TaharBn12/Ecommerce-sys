@@ -81,6 +81,11 @@ const presignRoute = defineRoute({
         "MIME type — one of: image/jpeg, image/png, image/webp, image/gif (validated server-side; invalid values return INVALID_FILE_TYPE)",
       example: "image/jpeg",
     }),
+    folder: z.enum(["products", "landing"]).optional().openapi({
+      description:
+        "R2 key namespace for the upload. Defaults to 'products'. Landing page image stacks use 'landing'.",
+      example: "landing",
+    }),
   }),
   responses: {
     200: {

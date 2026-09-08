@@ -263,6 +263,33 @@ export const StoreProductDetailSchema = z
   })
   .openapi("StoreProductDetail");
 
+export const StoreLandingPageSchema = z
+  .object({
+    id: z.string().openapi({ example: "lp_abc123" }),
+    slug: z.string().openapi({ example: "lp-9f3a2b1c" }),
+    name: z.string().openapi({ example: "Zinc v3 — carousel ad" }),
+    status: z.enum(["draft", "published", "archived"]).openapi({ example: "published" }),
+    imageGap: z.number().int().openapi({ description: "Pixels between stacked images", example: 0 }),
+    metaTitle: z.string().nullable().openapi({ example: "Samsung A55 — عرض خاص" }),
+    metaDescription: z.string().nullable().openapi({ example: "اطلب الآن — الدفع عند الاستلام" }),
+    publishedAt: z.string().datetime().nullable().openapi({ example: null }),
+    images: z
+      .array(
+        z.object({
+          id: z.string().openapi({ example: "lpimg_abc123" }),
+          src: z.string().openapi({ example: "https://media.codflow.store/landing/abc.jpg" }),
+          altText: z.string().nullable().openapi({ example: "عرض خاص" }),
+          position: z.number().int().openapi({ example: 1 }),
+        }),
+      )
+      .openapi({ description: "The image stack, ordered by position (1 = top)" }),
+    product: StoreProductDetailSchema.nullable().openapi({
+      description:
+        "The product in its full store-product shape — the landing page renders the same data the product page does, so the order form works unmodified. Null when the product is no longer publicly visible.",
+    }),
+  })
+  .openapi("StoreLandingPage");
+
 export const StoreConfigSchema = z
   .object({
     id: z.string().openapi({ description: "Store UUID" }),

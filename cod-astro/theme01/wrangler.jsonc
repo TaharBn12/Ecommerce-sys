@@ -18,6 +18,10 @@
   //   STORE_API_KEY  → a secret — set it via `wrangler secret put STORE_API_KEY`
   //                     (do NOT put the real key here). Local dev reads both from .dev.vars.
   "vars": {
+    // LOCAL DEV DEFAULT. Production deploys MUST override:
+    //   npx wrangler deploy --var COD_SERVER_URL:https://api.yourdomain.com
+    // Forgetting the override breaks every storefront API fetch (products,
+    // landing pages — everything 302s home). Deploy scripts must pass it.
     "COD_SERVER_URL": "http://localhost:8787"
   }
 }

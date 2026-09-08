@@ -7,8 +7,8 @@
 import { Context } from "hono";
 import type { AppContext } from "@/types";
 import { getDb } from "@/db";
-import { eq, and, lt, sql } from "drizzle-orm";
-import { companyStopDesks, wilayas } from "@/db/schema";
+import { eq, and, lt, sql, desc, count } from "drizzle-orm";
+import { companyStopDesks, wilayas, webhookEvents, orders } from "@/db/schema";
 import * as queries from "./queries";
 import * as validation from "./validation";
 import { getProvider, isEcotrackCompany } from "./providers/registry";
@@ -16,6 +16,7 @@ import { EcotrackProvider } from "./providers/ecotrack/adapter";
 import { reconcileEcotrackOrders, DEFAULT_MAX_PAGES } from "./providers/ecotrack/reconcile";
 import { NotFoundError, ValidationError, BusinessLogicError, ConflictError, ExternalApiError } from "@/lib/errors/classes";
 import { ERROR_CODES } from "../../../../cod-shared/errors/codes";
+import { syncCarrierGeoNames } from "../../../../cod-shared/queries/carrier-geo";
 
 /**
  * GET /delivery-companies
@@ -502,4 +503,144 @@ export async function deleteDeliveryCompany(c: Context<AppContext>) {
 
   console.info(`[delivery-companies] deleted company=${id}`);
   return c.json({ success: true }, 200);
+}
+
+/**
+ * POST /delivery-companies/:id/sync-geo
+ *
+ * Builds the per-carrier wilaya/commune name map — the exact strings the
+ * carrier matches parcel addresses against. Yalidine-only for now (the only
+ * name-matching carrier we integrate); other carriers get 422.
+ */
+export async function syncGeoNames(c: Context<AppContext>) {
+  const db = getDb(c.env.DB);
+  const { id } = (c.req as any).valid?.("param") ?? { id: c.req.param("id")! };
+
+  const company = await queries.getDeliveryCompanyRaw(db, id);
+  if (!company) throw new NotFoundError("Delivery company", id);
+
+  if (!company.apiToken) {
+    throw new ValidationError(
+      `${company.name} is not connected — add API credentials first`,
+      ERROR_CODES.MISSING_API_CREDENTIALS,
+      { companyId: id }
+    );
+  }
+
+  if (company.code !== "yalidine") {
+    throw new BusinessLogicError(
+      `Geo name sync applies to carriers that match addresses by name (Yalidine). "${company.code}" does not need it.`,
+      ERROR_CODES.OPERATION_NOT_SUPPORTED,
+      { companyId: id, code: company.code }
+    );
+  }
+
+  let provider;
+  try {
+    provider = getProvider(company);
+  } catch (err) {
+    throw new BusinessLogicError(
+      err instanceof Error ? err.message : "Provider not available",
+      ERROR_CODES.PROVIDER_NOT_SUPPORTED,
+      { companyId: id, code: company.code }
+    );
+  }
+
+  if (typeof provider.getGeoNames !== "function") {
+    throw new BusinessLogicError(
+      `The ${company.code} provider does not support geo name sync`,
+      ERROR_CODES.OPERATION_NOT_SUPPORTED,
+      { companyId: id, code: company.code }
+    );
+  }
+
+  let geoNames;
+  try {
+    geoNames = await provider.getGeoNames();
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    throw new ExternalApiError(company.code, errorMessage, { companyId: id });
+  }
+
+  const result = await syncCarrierGeoNames(db, company.code, geoNames);
+
+  console.info(
+    `[delivery-companies] geo sync company=${id} code=${company.code} ` +
+    `wilayas=${result.wilayasMatched}/${result.wilayasMatched + result.wilayasUnmapped} ` +
+    `communes=${result.communesMatched}/${result.communesMatched + result.communesUnmapped}`
+  );
+  return c.json({ success: true, data: result }, 200);
+}
+
+/**
+ * GET /delivery-companies/:id/webhook/events
+ *
+ * Reads the company's inbound webhook event log — every delivery from every
+ * webhook-capable carrier lands in webhook_events with its processing
+ * outcome. Carrier-agnostic (provider column distinguishes Yalidine vs ZR).
+ * Newest first; orderNumber joined for display; rawPayload excluded.
+ */
+export async function listWebhookEvents(c: Context<AppContext>) {
+  const db = getDb(c.env.DB);
+  const { id } = (c.req as any).valid?.("param") ?? { id: c.req.param("id")! };
+  const query = (c.req as any).valid?.("query") ?? {
+    limit: 25,
+    offset: 0,
+    result: c.req.query("result"),
+  };
+
+  const company = await queries.getDeliveryCompanyById(db, id);
+  if (!company) throw new NotFoundError("Delivery company", id);
+
+  const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
+  const offset = Math.max(Number(query.offset) || 0, 0);
+
+  const conditions = [eq(webhookEvents.companyId, id)];
+  if (query.result) {
+    conditions.push(eq(webhookEvents.result, String(query.result)));
+  }
+
+  const where = conditions.length === 1 ? conditions[0] : and(...conditions);
+
+  const [rows, countRow] = await Promise.all([
+    db
+      .select({
+        id: webhookEvents.id,
+        provider: webhookEvents.provider,
+        eventId: webhookEvents.eventId,
+        tracking: webhookEvents.tracking,
+        eventType: webhookEvents.eventType,
+        result: webhookEvents.result,
+        newStatus: webhookEvents.newStatus,
+        reason: webhookEvents.reason,
+        errorMsg: webhookEvents.errorMsg,
+        orderId: webhookEvents.orderId,
+        orderNumber: orders.orderNumber,
+        processedAt: webhookEvents.processedAt,
+        createdAt: webhookEvents.createdAt,
+      })
+      .from(webhookEvents)
+      .leftJoin(orders, eq(webhookEvents.orderId, orders.id))
+      .where(where)
+      .orderBy(desc(webhookEvents.createdAt), desc(webhookEvents.id))
+      .limit(limit)
+      .offset(offset)
+      .all(),
+    db
+      .select({ total: count() })
+      .from(webhookEvents)
+      .where(where)
+      .get(),
+  ]);
+
+  return c.json(
+    {
+      success: true,
+      data: {
+        events: rows,
+        total: Number(countRow?.total ?? 0),
+      },
+    },
+    200,
+  );
 }

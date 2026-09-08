@@ -1,4 +1,5 @@
 import {
+  Globe,
   Lock,
   MapPin,
   RefreshCw,
@@ -21,6 +22,8 @@ export function CompanySettingsSection({
   onToggleAutoValidate,
   syncingDesks,
   onSyncDesks,
+  syncingGeo,
+  onSyncGeo,
 }: {
   config: ProviderConfig;
   company: DeliveryCompany | null;
@@ -31,6 +34,8 @@ export function CompanySettingsSection({
   onToggleAutoValidate: () => void;
   syncingDesks: boolean;
   onSyncDesks: () => void;
+  syncingGeo: boolean;
+  onSyncGeo: () => void;
 }) {
   const t = useT("delivery_companies");
   const isConnected = company?.isConnected ?? false;
@@ -42,6 +47,9 @@ export function CompanySettingsSection({
         : false;
   const supportsWebhook = providerCode === "zr_express" || providerCode === "yalidine";
   const isEcotrackProvider = providerCode === "ecotrack" || providerCode.endsWith("_ecotrack");
+  // Only carriers that match parcel addresses by exact name strings need
+  // the geo-name map (Yalidine). Others dispatch with reference names.
+  const matchesByName = providerCode === "yalidine";
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -170,6 +178,18 @@ export function CompanySettingsSection({
               <RefreshCw size={14} className={cn(syncingDesks && "animate-spin")} />
               {t("sync_desks")}
             </Button>
+            {matchesByName && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={onSyncGeo}
+                disabled={syncingGeo || !isConnected}
+                className="justify-start"
+              >
+                <Globe size={14} className={cn(syncingGeo && "animate-spin")} />
+                {t("sync_geo")}
+              </Button>
+            )}
             <a
               href={`/delivery/companies/${providerCode}/stop-desks`}
               className={cn(

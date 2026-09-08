@@ -25,6 +25,13 @@ export interface Env {
   R2_SECRET_ACCESS_KEY: string;
   /** Comma-separated list of allowed CORS origins (e.g., "http://localhost:3000,https://app.example.com") */
   ALLOWED_ORIGINS?: string;
+  /**
+   * Optional storefront fallback origin (e.g., "https://store.example.com").
+   * Landing page share URLs prefer the store's own domain (stores.domain,
+   * set by the merchant in Store Settings); this var is the fallback for
+   * deployments without a custom domain yet.
+   */
+  STOREFRONT_URL?: string;
 
   // ─── MCP remote server (added MCP-8) ───────────────────────────────────────
   /**

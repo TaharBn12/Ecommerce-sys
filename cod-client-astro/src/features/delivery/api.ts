@@ -162,6 +162,20 @@ export async function syncCompanyStopDesks(companyId: string) {
   return (await apiFetch<DataEnvelope<{ total: number; removed: number; syncedAt: string }>>(`/api/delivery-companies/${encodeURIComponent(companyId)}/sync-stop-desks`, json({ method: "POST", body: "{}" }))).data;
 }
 
+export interface CarrierGeoSyncResult {
+  wilayasMatched: number;
+  wilayasUnmapped: number;
+  communesMatched: number;
+  communesUnmapped: number;
+  unmappedCommunes: Array<{ communeId: string; ourName: string }>;
+  unmappedWilayas: Array<{ wilayaId: number; ourName: string }>;
+  syncedAt: string;
+}
+
+export async function syncCarrierGeoNames(companyId: string) {
+  return (await apiFetch<DataEnvelope<CarrierGeoSyncResult>>(`/api/delivery-companies/${encodeURIComponent(companyId)}/sync-geo`, json({ method: "POST", body: "{}" }))).data;
+}
+
 export async function toggleCompanyStopDesk(companyId: string, code: string) {
   return (await apiFetch<DataEnvelope<{ code: string; active: boolean }>>(`/api/delivery-companies/${encodeURIComponent(companyId)}/stop-desks/${encodeURIComponent(code)}/toggle`, json({ method: "PATCH", body: "{}" }))).data;
 }
@@ -214,6 +228,45 @@ export async function saveYalidineSecret(companyId: string, secret: string) {
 
 export async function saveZrStatusMapping(companyId: string, mapping: Record<string, string[]>) {
   return await apiFetch<{ success: boolean }>(`/api/delivery-companies/${encodeURIComponent(companyId)}/webhook/mapping`, json({ method: "PATCH", body: JSON.stringify({ mapping }) }));
+}
+
+// ─── Webhook Events ────────────────────────────────────────────────────────────
+
+export interface WebhookEventRow {
+  id: string;
+  provider: "zr_express" | "yalidine";
+  eventId: string;
+  tracking: string | null;
+  eventType: string;
+  result: "ok" | "ignored" | "unmapped" | "error" | "pending";
+  newStatus: string | null;
+  reason: string | null;
+  errorMsg: string | null;
+  orderId: string | null;
+  orderNumber: string | null;
+  processedAt: string | null;
+  createdAt: string;
+}
+
+export interface WebhookEventsPage {
+  events: WebhookEventRow[];
+  total: number;
+}
+
+export async function listCompanyWebhookEvents(
+  companyId: string,
+  opts: { limit?: number; offset?: number; result?: WebhookEventRow["result"] } = {},
+) {
+  const qs = new URLSearchParams();
+  if (opts.limit != null) qs.set("limit", String(opts.limit));
+  if (opts.offset != null) qs.set("offset", String(opts.offset));
+  if (opts.result) qs.set("result", opts.result);
+  const query = qs.toString();
+  return (
+    await apiFetch<DataEnvelope<WebhookEventsPage>>(
+      `/api/delivery-companies/${encodeURIComponent(companyId)}/webhook/events${query ? `?${query}` : ""}`,
+    )
+  ).data;
 }
 
 // ─── Shipping Profiles ────────────────────────────────────────────────────────

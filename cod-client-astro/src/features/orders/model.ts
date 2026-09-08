@@ -91,6 +91,11 @@ export function dispatchFieldSupport(companyCode: string): {
   if (isEcotrack) return { remarks: true, weight: true, fragile: true };
   if (companyCode === "noest")
     return { remarks: true, weight: true, fragile: false };
+  // Yalidine takes a per-parcel weight (official create contract; the
+  // adapter forwards it) — over 5kg billable weight an oversize fee applies,
+  // so the merchant needs the input. No remarks endpoint, no fragile field.
+  if (companyCode === "yalidine")
+    return { remarks: false, weight: true, fragile: false };
   return { remarks: false, weight: false, fragile: false };
 }
 

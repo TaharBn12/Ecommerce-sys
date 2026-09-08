@@ -6,7 +6,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro build && wrangler dev",
-    "deploy": "astro build && wrangler deploy",
+    "deploy": "astro build && wrangler deploy --var COD_SERVER_URL:https://api.codflow.store",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv src/env.d.ts",
     "test": "vitest --run",
     "test:watch": "vitest",

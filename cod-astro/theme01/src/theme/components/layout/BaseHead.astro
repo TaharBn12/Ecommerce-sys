@@ -18,9 +18,12 @@ interface Props {
   font: string;
   bg: string;
   accent: string;
+  /** The page's LCP images (landing page stack top) — preloaded in <head>
+   *  so their fetch starts before the parser reaches the <img> tags. */
+  preloadImages?: string[];
 }
 
-const { title, description, ogImage, noindex, config, primary, fontHref, font, bg, accent } = Astro.props;
+const { title, description, ogImage, noindex, config, primary, fontHref, font, bg, accent, preloadImages } = Astro.props;
 
 import { MEDIA_DOMAIN } from "astro:env/server";
 ---
@@ -32,7 +35,7 @@ import { MEDIA_DOMAIN } from "astro:env/server";
   <meta name="theme-color" content={primary} />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
   <title>{title}</title>
   <meta name="description" content={description} />
   {noindex && <meta name="robots" content="noindex,nofollow" />}
@@ -64,6 +67,14 @@ import { MEDIA_DOMAIN } from "astro:env/server";
 
   <!-- R2 media domain — early connection for product images -->
   {MEDIA_DOMAIN && <link rel="preconnect" href={`https://${MEDIA_DOMAIN}`} />}
+
+  <!-- LCP image preload — starts the first stack images' fetches from the
+       head (fetchpriority on the img alone waits for the parser to reach it).
+       Only the first is high priority: preloading deep stack images would
+       compete with the LCP for mobile bandwidth. -->
+  {preloadImages?.slice(0, 2).map((src, i) => (
+    <link rel="preload" as="image" href={src} fetchpriority={i === 0 ? "high" : undefined} />
+  ))}
 
   <!-- Meta Pixel — canonical base code, unmodified. fbevents.js ships its own
        command queue: every fbq() call made before the library arrives (incl.

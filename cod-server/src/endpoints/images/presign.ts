@@ -23,22 +23,30 @@ const MIME_TO_EXT: Record<string, string> = {
 
 const PRESIGN_EXPIRY_SECONDS = 600; // 10 minutes
 
+/** R2 key namespaces clients may request. Anything else is rejected —
+ *  clients must never control arbitrary key prefixes. */
+const ALLOWED_FOLDERS = new Set(["products", "landing"]);
+
 /**
  * POST /api/images/presign
- * Body: { contentType: string, fileName?: string }
+ * Body: { contentType: string, fileName?: string, folder?: "products" | "landing" }
  * Returns: { presignedUrl, key, publicUrl }
  *
  * The browser uploads directly to R2 via PUT to presignedUrl.
  * The publicUrl uses the MEDIA_DOMAIN custom domain for permanent serving.
+ * The key lands in the requested folder (default "products") — landing page
+ * images keep their own namespace, mirroring the products flow.
  *
  * Required secrets (set via `wrangler secret put`):
  *   CF_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
  */
 export async function presignUpload(c: Context<AppContext>) {
   let contentType = "";
+  let folder = "products";
   try {
-    const body = await c.req.json<{ contentType?: string }>();
+    const body = await c.req.json<{ contentType?: string; folder?: string }>();
     contentType = body.contentType ?? "";
+    folder = body.folder ?? "products";
   } catch {
     // empty body — contentType stays ""
   }
@@ -51,8 +59,16 @@ export async function presignUpload(c: Context<AppContext>) {
     );
   }
 
+  if (!ALLOWED_FOLDERS.has(folder)) {
+    throw new ValidationError(
+      "Invalid folder. Allowed: products, landing",
+      ERROR_CODES.INVALID_FILE_TYPE,
+      { folder, allowedFolders: Array.from(ALLOWED_FOLDERS) }
+    );
+  }
+
   const ext = MIME_TO_EXT[contentType] ?? "jpg";
-  const key = `products/${crypto.randomUUID().replace(/-/g, "")}.${ext}`;
+  const key = `${folder}/${crypto.randomUUID().replace(/-/g, "")}.${ext}`;
 
   const { CF_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, MEDIA_DOMAIN } = c.env;
 

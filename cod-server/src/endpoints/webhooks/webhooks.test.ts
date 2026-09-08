@@ -346,6 +346,7 @@ describe("Webhooks Endpoint - Error Scenarios", () => {
       vi.mocked(mapYalidineStatus).mockReturnValue({
         status: "delivered",
         incrementAttempts: false,
+        noop: false,
       });
       vi.mocked(getOrderByTracking).mockRejectedValue(new Error("Database connection failed"));
       vi.mocked(updateWebhookEvent).mockResolvedValue(undefined as any);
@@ -400,6 +401,7 @@ describe("Webhooks Endpoint - Error Scenarios", () => {
       vi.mocked(mapYalidineStatus).mockReturnValue({
         status: "delivered",
         incrementAttempts: false,
+        noop: false,
       });
       vi.mocked(getOrderByTracking).mockResolvedValue({
         id: "order_123",

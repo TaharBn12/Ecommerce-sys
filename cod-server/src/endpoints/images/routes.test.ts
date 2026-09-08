@@ -140,6 +140,33 @@ describe("Images routes", () => {
       expect(body.code).toBe(ERROR_CODES.INVALID_FILE_TYPE);
     });
 
+    it("folder=landing lands the key in the landing/ namespace", async () => {
+      const res = await app.request("/api/images/presign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contentType: "image/jpeg", folder: "landing" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body: any = await res.json();
+      expect(body.data.key).toMatch(/^landing\/[a-f0-9]+\.jpg$/);
+      expect(body.data.publicUrl).toBe(`https://cdn.example.com/${body.data.key}`);
+    });
+
+    it("rejects arbitrary folder values — clients cannot control key prefixes", async () => {
+      const res = await app.request("/api/images/presign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contentType: "image/jpeg", folder: "../../etc" }),
+      });
+
+      // Rejected at the route's zod enum (VALIDATION_FAILED); the handler's
+      // allowlist check remains as defense-in-depth for non-route callers.
+      expect(res.status).toBe(400);
+      const body: any = await res.json();
+      expect(["VALIDATION_FAILED", "INVALID_FILE_TYPE"]).toContain(body.code);
+    });
+
     it("returns 500 when R2 credentials are not configured", async () => {
       delete testEnv.CF_ACCOUNT_ID;
 

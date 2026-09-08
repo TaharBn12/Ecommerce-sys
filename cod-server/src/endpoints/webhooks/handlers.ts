@@ -28,6 +28,7 @@ import {
 import { ORDER_STATUSES } from "../orders/validation";
 import type { OrderStatus } from "../../../../cod-shared/db/schema";
 import { verifySvixSignature } from "./svix-verify";
+import { verifyYalidineSignature } from "./yalidine-verify";
 import { mapZrStateName, parseCustomMapping } from "./zr-status-mapper";
 import { mapYalidineStatus } from "./yalidine-status-mapper";
 import { ValidationError, ExternalApiError } from "@/lib/errors/classes";
@@ -37,6 +38,9 @@ import { ERROR_CODES } from "../../../../cod-shared/errors/codes";
 function isOrderStatus(value: string): value is (typeof ORDER_STATUSES)[number] {
   return (ORDER_STATUSES as readonly string[]).includes(value);
 }
+
+/** Terminal order statuses — late carrier events never modify these orders. */
+const TERMINAL_ORDER_STATUSES = new Set<OrderStatus>(["delivered", "returned", "cancelled"]);
 import { shouldTriggerCapiPurchase } from "@/workflows/capi-helpers";
 
 // ─── ZR Express ───────────────────────────────────────────────────────────────
@@ -283,14 +287,35 @@ export async function handleYalidineWebhook(c: Context<AppContext>) {
     return c.json({ received: true }, 200);
   }
 
-  // TODO: implement Yalidine signature verification once "Secure Your Webhook"
-  // documentation is obtained. The header name and algorithm are not documented
-  // in the currently available Yalidine webhook docs. The webhookSecret is stored
-  // in the DB but verification is deferred until docs are available.
+  // Signature verification (official "Secure Your Webhook" spec): HMAC-SHA256
+  // of the RAW body bytes, keyed with the webhook secret from the company
+  // record (stored via PATCH /delivery-companies/:id/webhook/secret).
+  // Secret set → tampered deliveries are rejected with 400 (docs: "ignore
+  // the payload as it may affect the integrity of your data"). Secret unset
+  // → fail-open with one clear log line so merchants without a secret keep
+  // receiving events (dashboard surfaces the unverified state — Slice Y3).
   if (company.webhookSecret) {
+    // Both header spellings accepted: HTTP convention X-Yalidine-Signature
+    // and the docs' PHP-formatted X_YALIDINE_SIGNATURE.
+    const signature =
+      c.req.header("x-yalidine-signature") ?? c.req.header("x_yalidine_signature") ?? null;
+    const valid = await verifyYalidineSignature(
+      rawBody,
+      signature,
+      company.webhookSecret,
+    );
+    if (!valid) {
+      console.warn("[webhook][yalidine] Signature verification failed");
+      throw new ValidationError(
+        "Invalid webhook signature",
+        ERROR_CODES.INVALID_WEBHOOK_PAYLOAD,
+        { provider: "yalidine" }
+      );
+    }
+  } else {
     console.warn(
-      "[webhook][yalidine] webhookSecret is set but signature verification is not yet implemented — " +
-      "obtain the 'Secure Your Webhook' section from Yalidine docs to implement"
+      "[webhook][yalidine] webhookSecret not set — accepting unverified events " +
+      "(set the secret in the dashboard to enable verification)"
     );
   }
 
@@ -345,26 +370,40 @@ export async function handleYalidineWebhook(c: Context<AppContext>) {
 
       const statusStr = (eventData.status as string | undefined) ?? null;
       const reason = (eventData.reason as string | null | undefined) ?? null;
-      const { status: mappedStatus, incrementAttempts } = mapYalidineStatus(statusStr);
+      const { status: mappedStatus, incrementAttempts, noop } = mapYalidineStatus(statusStr);
 
       if (mappedStatus === null || !isOrderStatus(mappedStatus)) {
+        // Known transit status (noop) → deliberate ignore, the status itself
+        // (and reason, e.g. En alerte's "Téléphone injoignable") is the log
+        // line. Unknown string → 'unmapped': never guess, surface it loudly.
         await updateWebhookEvent(db, webhookEventId, {
-          result: "unmapped",
-          reason: statusStr ?? undefined,
+          result: noop ? "ignored" : "unmapped",
+          reason: reason ?? statusStr ?? undefined,
           processedAt: now,
         });
         continue;
       }
       const nextStatus: OrderStatus = mappedStatus;
 
-      // "Tentative échouée" — stays out_for_delivery, only increments attempts
+      // "Tentative échouée" — stays out_for_delivery, only increments attempts.
+      // Terminal orders (delivered/returned/cancelled) are final: a late,
+      // out-of-order attempt event must not touch them.
       if (incrementAttempts) {
         if (tracking) {
           const order = await getOrderByTracking(db, tracking);
-          if (order) {
+          if (order && !TERMINAL_ORDER_STATUSES.has(order.status)) {
             await incrementDeliveryAttempts(db, order.id);
             await updateWebhookEvent(db, webhookEventId, {
               result: "ignored", // not a status transition
+              reason: reason ?? undefined,
+              orderId: order.id,
+              processedAt: now,
+            });
+            continue;
+          }
+          if (order) {
+            await updateWebhookEvent(db, webhookEventId, {
+              result: "ignored",
               reason: reason ?? undefined,
               orderId: order.id,
               processedAt: now,

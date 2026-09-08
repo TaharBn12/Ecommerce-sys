@@ -141,7 +141,15 @@ describe("orders model", () => {
       weight: true,
       fragile: false,
     });
+    // Yalidine: weight is a real create-parcel field (oversize fee past
+    // 5kg billable); no remarks endpoint; no fragile field.
     expect(dispatchFieldSupport("yalidine")).toEqual({
+      remarks: false,
+      weight: true,
+      fragile: false,
+    });
+    // ZR Express exposes none of the three.
+    expect(dispatchFieldSupport("zr_express")).toEqual({
       remarks: false,
       weight: false,
       fragile: false,

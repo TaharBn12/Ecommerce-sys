@@ -20,6 +20,8 @@ import {
 } from "@/components/ui";
 import { CompanyCredentialsFormCard } from "@/features/delivery/components/CompanyCredentialsFormCard";
 import { CompanyCredentialsSidebar } from "@/features/delivery/components/CompanyCredentialsSidebar";
+import { CompanyWebhookSetupCard } from "@/features/delivery/components/CompanyWebhookSetupCard";
+import { CompanyZrWebhookCard } from "@/features/delivery/components/CompanyZrWebhookCard";
 import { notify } from "@/lib/notify";
 
 function Loading() {
@@ -237,6 +239,7 @@ export function CompanyCredentialsDetail({ providerCode }: { providerCode: strin
 
   const isConnected = company?.isConnected ?? false;
   const busy = loading || disconnecting;
+  const canManage = canScope(identity, SCOPES.DELIVERY_MANAGE);
 
   return (
     <div className="space-y-5">
@@ -280,6 +283,22 @@ export function CompanyCredentialsDetail({ providerCode }: { providerCode: strin
           onDisconnect={() => void handleDisconnect()}
         />
       </div>
+
+      {providerCode === "yalidine" && (
+        <CompanyWebhookSetupCard
+          company={company}
+          canManage={canManage}
+          onSaved={() => void load()}
+        />
+      )}
+
+      {providerCode === "zr_express" && (
+        <CompanyZrWebhookCard
+          company={company}
+          canManage={canManage}
+          onSaved={() => void load()}
+        />
+      )}
     </div>
   );
 }

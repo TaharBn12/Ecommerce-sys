@@ -304,6 +304,48 @@ const toggleStopDeskRoute = defineRoute({
   handler: handlers.toggleCompanyStopDesk,
 });
 
+const syncGeoNamesRoute = defineRoute({
+  method: "post",
+  path: "/{id}/sync-geo",
+  auth: "api-key",
+  tags: ["Delivery Companies"],
+  summary: "Sync carrier geo names",
+  description:
+    "Fetch the carrier's own wilaya/commune name lists and build the per-carrier name map " +
+    "(exact strings the carrier matches parcel addresses against). Yalidine-only for now — " +
+    "carriers that match by name. Response reports matched and unmapped reference rows. " +
+ "Dispatch resolves our wilaya/commune IDs through this map before calling the carrier.",
+  params: idParams,
+  responses: {
+    200: {
+      description: "Geo names synced",
+      content: jsonContent(
+        z.object({
+          success: z.boolean(),
+          data: z.object({
+            wilayasMatched: z.number().int().openapi({ description: "Wilayas with a carrier string stored", example: 58 }),
+            wilayasUnmapped: z.number().int(),
+            communesMatched: z.number().int().openapi({ description: "Communes with a carrier string stored", example: 1497 }),
+            communesUnmapped: z.number().int(),
+            unmappedCommunes: z.array(z.object({
+              communeId: z.string(),
+              ourName: z.string().openapi({ example: "Aghabal" }),
+            })),
+            unmappedWilayas: z.array(z.object({
+              wilayaId: z.number().int(),
+              ourName: z.string(),
+            })),
+            syncedAt: z.string().datetime(),
+          }),
+        })
+      ),
+    },
+    422: { description: "Company not yalidine-style name-matching or not connected" },
+    502: { description: "External API failure" },
+  },
+  handler: handlers.syncGeoNames,
+});
+
 const testConnectionRoute = defineRoute({
   method: "post",
   path: "/{id}/test-connection",
@@ -467,6 +509,70 @@ const saveZrMappingRoute = defineRoute({
   handler: webhookHandlers.saveZrStatusMapping,
 });
 
+const webhookEventsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(25).openapi({
+    description: "Page size (1-100)",
+    example: 25,
+  }),
+  offset: z.coerce.number().int().min(0).default(0).openapi({
+    description: "Offset for keyset-free pagination",
+    example: 0,
+  }),
+  result: z.enum(["ok", "ignored", "unmapped", "error", "pending"]).optional().openapi({
+    description: "Filter by processing result — the operational lens: unmapped needs mapping fixes, error needs attention",
+  }),
+});
+
+const listWebhookEventsRoute = defineRoute({
+  method: "get",
+  path: "/{id}/webhook/events",
+  auth: "api-key",
+  tags: ["Delivery Companies"],
+  summary: "List inbound webhook events",
+  description:
+    "Reads the company's inbound webhook event log (every delivery from every webhook-capable " +
+    "carrier lands here with its processing outcome). Carrier-agnostic — the same view serves " +
+    "Yalidine and ZR Express events. Newest first. Each row carries the carrier tracking " +
+    "number, event type, processing result (ok / ignored / unmapped / error / pending), the " +
+    "mapped order + status transition when one happened, and the carrier's reason string. " +
+    "rawPayload is omitted from the list for payload size — the log's value is the outcome, " +
+    "not the bytes.",
+  params: idParams,
+  query: webhookEventsQuerySchema,
+  responses: {
+    200: {
+      description: "Webhook events page",
+      content: jsonContent(
+        z.object({
+          success: z.boolean(),
+          data: z.object({
+            events: z.array(
+              z.object({
+                id: z.string().openapi({ example: "b537eb81-e24d-4df5-be7a-b3bf3293a524" }),
+                provider: z.enum(["zr_express", "yalidine"]).openapi({ example: "yalidine" }),
+                eventId: z.string().openapi({ description: "Idempotency key (event_id / svix-id)" }),
+                tracking: z.string().nullable(),
+                eventType: z.string().openapi({ example: "parcel_status_updated" }),
+                result: z.enum(["ok", "ignored", "unmapped", "error", "pending"]),
+                newStatus: z.string().nullable().openapi({ description: "Order status set (when result=ok)" }),
+                reason: z.string().nullable().openapi({ description: "Carrier reason / status string (Tentative échouée's reason, unmapped status)" }),
+                errorMsg: z.string().nullable(),
+                orderId: z.string().nullable(),
+                orderNumber: z.string().nullable().openapi({ description: "Joined from orders for display" }),
+                processedAt: z.string().nullable(),
+                createdAt: z.string().datetime(),
+              })
+            ),
+            total: z.number().int().openapi({ description: "Total rows matching the filter (for pagination)" }),
+          }),
+        })
+      ),
+    },
+    404: { description: "Company not found" },
+  },
+  handler: handlers.listWebhookEvents,
+});
+
 // ─── Route Registrations ───────────────────────────────────────────────────────
 
 // Apply RBAC middleware to all routes
@@ -480,6 +586,7 @@ deliveryCompaniesRouter.use("/:id/stop-desks/:code/toggle", requireScope(SCOPES.
 deliveryCompaniesRouter.use("/:id/webhook/register", requireScope(SCOPES.DELIVERY_MANAGE));
 deliveryCompaniesRouter.use("/:id/webhook/secret", requireScope(SCOPES.DELIVERY_MANAGE));
 deliveryCompaniesRouter.use("/:id/webhook/mapping", requireScope(SCOPES.DELIVERY_MANAGE));
+deliveryCompaniesRouter.use("/:id/webhook/events", requireScope(SCOPES.DELIVERY_READ));
 
 // GET /delivery-companies — list all companies
 deliveryCompaniesRouter.openapi(listRoute.route, listRoute.handler);
@@ -492,6 +599,9 @@ deliveryCompaniesRouter.openapi(getStopDesksRoute.route, getStopDesksRoute.handl
 
 // POST /delivery-companies/:id/sync-stop-desks — fetch from carrier API and upsert into DB
 deliveryCompaniesRouter.openapi(syncStopDesksRoute.route, syncStopDesksRoute.handler);
+
+// POST /delivery-companies/:id/sync-geo — build the per-carrier name map
+deliveryCompaniesRouter.openapi(syncGeoNamesRoute.route, syncGeoNamesRoute.handler);
 
 // POST /delivery-companies/:id/test-connection — verify stored credentials at the carrier
 deliveryCompaniesRouter.openapi(testConnectionRoute.route, testConnectionRoute.handler);
@@ -524,5 +634,8 @@ deliveryCompaniesRouter.openapi(saveYalidineSecretRoute.route, saveYalidineSecre
 
 // PATCH /delivery-companies/:id/webhook/mapping — save ZR custom state name mapping
 deliveryCompaniesRouter.openapi(saveZrMappingRoute.route, saveZrMappingRoute.handler);
+
+// GET /delivery-companies/:id/webhook/events — read the inbound webhook event log
+deliveryCompaniesRouter.openapi(listWebhookEventsRoute.route, listWebhookEventsRoute.handler);
 
 export default deliveryCompaniesRouter;

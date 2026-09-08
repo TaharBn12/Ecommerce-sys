@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- delivery: per-carrier delivery-zone name sync — `carrier_wilayas` /
+  `carrier_communes` tables (migration 0021) + `POST
+  /api/delivery-companies/:id/sync-geo` + dashboard "Sync Delivery Zones"
+  button; Yalidine dispatches now carry the carrier's exact wilaya/commune
+  spellings (accent, punctuation, and distance-1 spelling variants matched;
+  ~25% of communes previously failed at the carrier)
+- delivery: `GET /api/delivery-companies/:id/webhook/events` — the inbound
+  webhook event log becomes readable (outcome filter, pagination, joined
+  order numbers); dashboard events panel for every webhook-capable carrier
+- delivery: Yalidine webhook setup UI (URL + copy, secret save, guided
+  4-step setup, verified/unverified state) and ZR Express webhook
+  register/unregister + custom status-mapping editor — both previously
+  backend-only
+- orders: dispatch delivery-type override (`deliveryType` body field) —
+  merchant-side home ⇄ stop-desk switching resolves stop-desk dead ends;
+  wilaya-scoped desk picking in the dispatch dialog (cross-wilaya fallback
+  removed) with commune desk pre-selection
+
+### Fixed
+
+- delivery: Yalidine webhook signature verification implemented (HMAC-SHA256
+  over raw body, hex digest, constant-time compare) — previously a TODO that
+  accepted unsigned events
+- delivery: Yalidine status mapper rewritten against the documented 36-status
+  enum — phantom statuses removed; real return-family statuses
+  (`Retourné au vendeur`, `Echèc livraison`, …) now map to `returned`
+  instead of leaving orders stuck at `out_for_delivery`; transit statuses
+  are deliberate no-ops (previously `Ramassé`/`En préparation` could
+  regress a dispatched order)
+- webhooks: replayed deliveries (documented carrier retries) no longer 500 —
+  duplicate-event detection now walks the Drizzle error cause chain;
+  previously every retry threw, eventually auto-disabling the webhook at
+  the carrier
+- webhooks: late `Tentative échouée` events no longer increment
+  deliveryAttempts on terminal orders
+
+### Known Limitations
+
+- **Yalidine outbound calls from Cloudflare Workers are blocked by
+  Yalidine's own Cloudflare zone** (HTTP 403, `error code: 1106`). Verified
+  exhaustively 2026-09-08: the block is applied at their edge BEFORE
+  authentication (no-token requests get the same 403), covers their entire
+  zone (even the marketing homepage), applies to `fetch()` AND raw TCP
+  sockets, and is token-independent — while the identical requests from
+  non-Cloudflare clients succeed. **Impact:** parcel creation (dispatch),
+  stop-desk sync, delivery-zone sync, and tracking-history pulls fail with
+  502 when called from the production Worker. **Inbound webhooks are
+  unaffected** (live-proven: real events arrive, are HMAC-verified,
+  deduplicated, and mapped). **Workarounds:** (1) request an allowlist from
+  Yalidine (developer@yalidine.com — evidence email drafted in
+  report-md/YALIDINE_EGRESS_BLOCK_EMAIL.md, gitignored), or (2) deploy the
+  ready-made egress relay `cod-server/scripts/yalidine-egress-proxy.ts`
+  (Deno Deploy or any non-Cloudflare host) and set `proxy_base_url` +
+  `proxy_secret` in the Yalidine company's notes JSON — the adapter routes
+  all carrier calls through it while the keys are present.
+
 ### Removed
 
 - **legacy Next.js dashboard (`cod-client/`)** — superseded by cod-client-astro

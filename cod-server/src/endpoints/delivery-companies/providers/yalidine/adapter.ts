@@ -34,9 +34,11 @@ import type {
   YalidineUpdateParcelResponse,
   YalidineDeleteParcelResponse,
   YalidineHistoryResponse,
+  YalidineWilayaList,
+  YalidineCommuneList,
 } from "./types";
 
-const BASE_URL = "https://api.yalidine.app/v1";
+const DEFAULT_BASE_URL = "https://api.yalidine.app/v1";
 
 export class YalidineProvider implements DeliveryProvider {
   readonly code = "yalidine";
@@ -51,14 +53,28 @@ export class YalidineProvider implements DeliveryProvider {
    */
   private readonly fromWilayaName: string;
 
+  /**
+   * Optional egress proxy (e.g. a Deno Deploy relay) — Yalidine's Cloudflare
+   * zone blocks ALL Cloudflare Worker traffic (403 error 1106, proven
+   * 2026-09-08 for fetch AND raw sockets). When proxyBaseUrl is set (from
+   * the company notes JSON), every carrier call goes through it; the proxy
+   * mirrors our paths 1:1. proxySecret rides the X-Proxy-Secret header.
+   */
+  private readonly baseUrl: string;
+  private readonly proxySecret: string | null;
+
   constructor(
     apiToken: string,
     apiId: string,
     fromWilayaName = "Alger",
+    proxyBaseUrl?: string,
+    proxySecret?: string,
   ) {
     this.apiToken = apiToken;
     this.apiId = apiId;
     this.fromWilayaName = fromWilayaName;
+    this.baseUrl = (proxyBaseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.proxySecret = proxySecret ?? null;
   }
 
   // ─── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -69,81 +85,78 @@ export class YalidineProvider implements DeliveryProvider {
       "X-API-TOKEN": this.apiToken,
       "Content-Type": "application/json",
       Accept: "application/json",
+      ...(this.proxySecret ? { "X-Proxy-Secret": this.proxySecret } : {}),
     };
   }
 
-  private async get<TRes>(path: string): Promise<TRes> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method: "GET",
+  /**
+   * Extract Yalidine's human-readable error text. Two real body shapes:
+   *   {"error":{"message":"API ID and/or Token are wrong","code":401,...}}  (auth/permission errors)
+   *   {"message":"..."}                                                     (validation errors)
+   * Falls back to the status code alone when the body is something else
+   * (e.g. an HTML 403 from an edge layer) — the status is always preserved.
+   */
+  private extractErrorMessage(status: number, json: unknown): string {
+    const j = json as
+      | { message?: string; error?: string | { message?: string } }
+      | null;
+    if (j && typeof j === "object") {
+      if (typeof j.message === "string" && j.message) return `Yalidine HTTP ${status}: ${j.message}`;
+      if (typeof j.error === "string" && j.error) return `Yalidine HTTP ${status}: ${j.error}`;
+      if (j.error && typeof j.error === "object" && typeof j.error.message === "string") {
+        return `Yalidine HTTP ${status}: ${j.error.message}`;
+      }
+    }
+    return `Yalidine HTTP ${status}`;
+  }
+
+  private async request<TRes>(
+    method: "GET" | "POST" | "PATCH" | "DELETE",
+    path: string,
+    body?: unknown,
+  ): Promise<TRes> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
       headers: this.headers(),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
-    let json: unknown;
-    try {
-      json = await res.json();
-    } catch {
-      throw new Error(`Yalidine HTTP ${res.status} — response is not valid JSON`);
+    const rawText = await res.text();
+    let json: unknown = null;
+    if (rawText) {
+      try {
+        json = JSON.parse(rawText);
+      } catch {
+        // Non-JSON body (HTML edge errors etc.) — snippet goes into the error.
+      }
     }
     if (!res.ok) {
-      const j = json as { message?: string; error?: string };
-      throw new Error(j.message ?? j.error ?? `Yalidine HTTP ${res.status}`);
+      let message = this.extractErrorMessage(res.status, json);
+      if (message === `Yalidine HTTP ${res.status}` && rawText) {
+        // No recognizable JSON message — surface a bounded snippet of the
+        // raw body so the actual cause (WAF block page, proxy error, …) is
+        // visible instead of a bare status code.
+        const snippet = rawText.replace(/\s+/g, " ").slice(0, 180);
+        message = `Yalidine HTTP ${res.status} (body: ${snippet})`;
+      }
+      throw new Error(message);
     }
     return json as TRes;
+  }
+
+  private async get<TRes>(path: string): Promise<TRes> {
+    return this.request<TRes>("GET", path);
   }
 
   private async post<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(body),
-    });
-    let json: unknown;
-    try {
-      json = await res.json();
-    } catch {
-      throw new Error(`Yalidine HTTP ${res.status} — response is not valid JSON`);
-    }
-    if (!res.ok) {
-      const j = json as { message?: string; error?: string };
-      throw new Error(j.message ?? j.error ?? `Yalidine HTTP ${res.status}`);
-    }
-    return json as TRes;
+    return this.request<TRes>("POST", path, body);
   }
 
   private async patch<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method: "PATCH",
-      headers: this.headers(),
-      body: JSON.stringify(body),
-    });
-    let json: unknown;
-    try {
-      json = await res.json();
-    } catch {
-      throw new Error(`Yalidine HTTP ${res.status} — response is not valid JSON`);
-    }
-    if (!res.ok) {
-      const j = json as { message?: string; error?: string };
-      throw new Error(j.message ?? j.error ?? `Yalidine HTTP ${res.status}`);
-    }
-    return json as TRes;
+    return this.request<TRes>("PATCH", path, body);
   }
 
   private async delete<TRes>(path: string): Promise<TRes> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method: "DELETE",
-      headers: this.headers(),
-    });
-    let json: unknown;
-    try {
-      json = await res.json();
-    } catch {
-      throw new Error(`Yalidine HTTP ${res.status} — response is not valid JSON`);
-    }
-    if (!res.ok) {
-      const j = json as { message?: string; error?: string };
-      throw new Error(j.message ?? j.error ?? `Yalidine HTTP ${res.status}`);
-    }
-    return json as TRes;
+    return this.request<TRes>("DELETE", path);
   }
 
   // ─── Shared parcel builder ────────────────────────────────────────────────────
@@ -287,21 +300,21 @@ export class YalidineProvider implements DeliveryProvider {
    * Fetch all Yalidine centers (stop-desk pickup points).
    * GET /v1/centers/ — paginated, auto-paginates until has_more = false.
    * stationCode on orders must match center_id (stored as string).
+   *
+   * Failures THROW (401/403/429/5xx propagate to the sync handler → 502
+   * with the real carrier message). Swallowing them made a dead credential
+   * look like "synced 0 desks, success".
    */
   async getStopDesks(): Promise<StopDesk[]> {
     const allCenters: YalidineCenterList["data"] = [];
-    try {
-      let page = 1;
-      let hasMore = true;
-      while (hasMore) {
-        const res = await this.get<YalidineCenterList>(`/centers/?page_size=1000&page=${page}`);
-        allCenters.push(...(res.data ?? []));
-        hasMore = res.has_more && (res.data?.length ?? 0) > 0;
-        page++;
-        if (page > 10) break;
-      }
-    } catch {
-      // Non-critical — return what we have
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const res = await this.get<YalidineCenterList>(`/centers/?page_size=1000&page=${page}`);
+      allCenters.push(...(res.data ?? []));
+      hasMore = res.has_more && (res.data?.length ?? 0) > 0;
+      page++;
+      if (page > 10) break;
     }
     return allCenters.map((c) => ({
       code:     String(c.center_id),
@@ -433,10 +446,10 @@ export class YalidineProvider implements DeliveryProvider {
 
   /**
    * Add a remark/note to a parcel.
-   * 
+   *
    * ⚠️ NOT SUPPORTED: Yalidine API does not have a dedicated remarks endpoint.
    * Remarks should be stored in your local database instead.
-   * 
+   *
    * @param _trackingNumber - The parcel tracking number (unused)
    * @param _content - The remark content (unused)
    * @returns false (not supported)
@@ -445,5 +458,35 @@ export class YalidineProvider implements DeliveryProvider {
     // Yalidine doesn't have a dedicated remarks/notes endpoint
     // Store remarks in local database instead
     return false;
+  }
+
+  /**
+   * Fetch the carrier's own wilaya + commune name lists — the exact strings
+   * Yalidine matches parcel addresses against. GET /v1/wilayas (one call) +
+   * GET /v1/communes (paginated). Used by the geo-name sync.
+   */
+  async getGeoNames(): Promise<{
+    wilayas: Array<{ id: number; name: string }>;
+    communes: Array<{ id: number; name: string; wilayaId: number }>;
+  }> {
+    const wilayaRes = await this.get<YalidineWilayaList>("/wilayas/?page_size=1000");
+    const wilayaNames = (wilayaRes.data ?? []).map((w) => ({ id: w.id, name: w.name }));
+
+    const communeNames: Array<{ id: number; name: string; wilayaId: number }> = [];
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const res = await this.get<YalidineCommuneList>(
+        `/communes/?page_size=1000&page=${page}`,
+      );
+      for (const c of res.data ?? []) {
+        communeNames.push({ id: c.id, name: c.name, wilayaId: c.wilaya_id });
+      }
+      hasMore = res.has_more && (res.data?.length ?? 0) > 0;
+      page++;
+      if (page > 5) break;
+    }
+
+    return { wilayas: wilayaNames, communes: communeNames };
   }
 }

@@ -10,10 +10,11 @@ export function GeneralSettings({
   onSave,
 }: {
   storeConfig: StoreConfig;
-  onSave: (payload: { name?: string; lang?: StoreLang; status?: StoreStatus }) => Promise<void>;
+  onSave: (payload: { name?: string; domain?: string | null; lang?: StoreLang; status?: StoreStatus }) => Promise<void>;
 }) {
   const t = useT("settings");
   const [name, setName] = useState(storeConfig.name);
+  const [domain, setDomain] = useState(storeConfig.domain ?? "");
   const [lang, setLang] = useState<StoreLang>(storeConfig.lang);
   const [status, setStatus] = useState<StoreStatus>(storeConfig.status);
 
@@ -23,7 +24,14 @@ export function GeneralSettings({
       title={t("store.general_title")}
       subtitle={t("store.general_subtitle")}
       onSave={async () => {
-        await onSave({ name: name.trim() || storeConfig.name, lang, status });
+        await onSave({
+          name: name.trim() || storeConfig.name,
+          // Empty input clears the domain (links fall back to the deployment's
+          // storefront URL); otherwise send the trimmed hostname.
+          domain: domain.trim() === "" ? null : domain.trim(),
+          lang,
+          status,
+        });
       }}
     >
       <FieldRow label={t("store.name_label")}>
@@ -31,6 +39,16 @@ export function GeneralSettings({
           value={name}
           onChange={(event) => setName(event.currentTarget.value)}
           placeholder={t("store.name_placeholder")}
+        />
+      </FieldRow>
+      <FieldRow label={t("store.domain_label")} hint={t("store.domain_hint")}>
+        <Input
+          value={domain}
+          onChange={(event) => setDomain(event.currentTarget.value)}
+          placeholder={t("store.domain_placeholder")}
+          dir="ltr"
+          spellCheck={false}
+          autoComplete="off"
         />
       </FieldRow>
       <FieldRow label={t("store.lang_label")}>

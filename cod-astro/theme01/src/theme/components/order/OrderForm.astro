@@ -23,9 +23,11 @@ interface Props {
   defaultVariantId: string | null;
   isOutOfStock?: boolean;
   otpEnabled?: boolean;
+  /** Landing page attribution — rides the form like fbc/fbp (best-effort). */
+  landingPageSlug?: string | null;
 }
 
-const { product, content, fieldErrors, serverError, basePrice, defaultVariant, cur, isRTL, offers, defaultVariantId, isOutOfStock = false, otpEnabled = false } = Astro.props;
+const { product, content, fieldErrors, serverError, basePrice, defaultVariant, cur, isRTL, offers, defaultVariantId, isOutOfStock = false, otpEnabled = false, landingPageSlug = null } = Astro.props;
 
 const comparePrice = defaultVariant?.compareAtPrice ?? product.compareAtPrice ?? null;
 ---
@@ -71,6 +73,8 @@ const comparePrice = defaultVariant?.compareAtPrice ?? product.compareAtPrice ??
     <input type="hidden" name="variantSelections"  value="[]" id="variant-selections-input" />
     {/* WhatsApp OTP proof — set by the OTP step script after verification */}
     <input type="hidden" name="otpToken" id="otp-token-input" value="" />
+    {/* Landing page attribution — present only on landing pages */}
+    {landingPageSlug && <input type="hidden" name="landingPageSlug" value={landingPageSlug} />}
 
     {/* Standalone variant selector only when no offers — otherwise it lives inside the tier cards */}
     {offers.length === 0 && <VariantSelector product={product} />}

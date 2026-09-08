@@ -114,7 +114,10 @@
     "api_key_reveal": "Reveal",
     "api_key_hide": "Hide",
     "api_key_missing": "API key not available. It will appear here after your next re-deployment.",
-    "error_load": "Could not load store settings"
+    "error_load": "Could not load store settings",
+    "domain_label": "Storefront domain",
+    "domain_placeholder": "store.example.com",
+    "domain_hint": "Your storefront's custom domain. Landing page share URLs are built from it. Leave empty to use the deployment's default storefront URL."
   },
   "shipping": {
     "title": "Shipping Rates",

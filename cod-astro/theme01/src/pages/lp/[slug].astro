@@ -1,0 +1,246 @@
+---
+// ── LANDING PAGE ─────────────────────────────────────────────────────────────
+// One-product marketing page: stacked images → the COD order form.
+// No header, no nav, no footer (StoreLayout marketing mode). The form is the
+// SAME OrderForm the product page uses — same DOM contract, same scripts — so
+// offers, OTP, wilaya cascade, and tracking all work unmodified.
+// ─────────────────────────────────────────────────────────────────────────────
+import StoreLayout from "@/theme/layouts/StoreLayout.astro";
+import OrderForm from "@/theme/components/order/OrderForm.astro";
+import ShippingIsland from "@/theme/components/product/ShippingIsland.astro";
+import { Icon } from "astro-icon/components";
+import { getStoreContext } from "@/theme/config/store";
+import { fetchLandingPageBySlug } from "@/core/api/client";
+import { actions } from "astro:actions";
+import { isInputError } from "astro:actions";
+
+const { slug } = Astro.params;
+
+// Both API calls in parallel — they're independent (slug comes from the
+// URL, not the store config), and sequential awaits doubled the time to
+// first byte on the live page.
+const [storeCtx, lp] = await Promise.all([
+  getStoreContext(),
+  fetchLandingPageBySlug(slug ?? ""),
+]);
+const { config, content, isRTL } = storeCtx;
+
+// Action result (must be checked before rendering — same as product page)
+const result = Astro.getActionResult(actions.placeOrder);
+const orderSuccess = result?.data?.orderNumber
+  ? {
+      orderNumber: result.data.orderNumber,
+      total: result.data.total,
+      orderId: result.data.orderId ?? "",
+    }
+  : null;
+const fieldErrors  = isInputError(result?.error) ? result.error.fields : {};
+const serverError  = result?.error && !isInputError(result.error) ? result.error.message : null;
+
+// Landing page data (from the parallel fetch above): published only.
+// Draft/archived/unknown → the store home (same contract as the product
+// page's missing-product path — ad traffic lands on the store instead of
+// a dead end).
+if (!lp) return Astro.redirect("/");
+
+const product = lp.product;
+const cur = config.currencySymbol;
+const defaultVariant = product?.hasVariants
+  ? (product.variants.find((v: typeof product.variants[0]) => v.isDefault) ?? product.variants[0])
+  : null;
+const basePrice    = defaultVariant?.price ?? product?.price ?? 0;
+const comparePrice = defaultVariant?.compareAtPrice ?? product?.compareAtPrice ?? null;
+
+const isOutOfStock = product?.trackInventory && product.inventory === 0;
+const defaultVariantId = defaultVariant?.id ?? null;
+
+const images: Array<{
+  id: string;
+  src: string;
+  altText: string | null;
+  width: number | null;
+  height: number | null;
+}> = lp.images ?? [];
+const firstImage = images[0]?.src ?? "";
+const metaTitle = lp.metaTitle || (product ? `${product.name} — ${config.name}` : config.name);
+const metaDescription = lp.metaDescription || config.metaDescription || undefined;
+---
+
+<StoreLayout
+  config={config}
+  content={content}
+  title={metaTitle}
+  description={metaDescription}
+  ogImage={firstImage}
+  marketing={true}
+  preloadImages={images.slice(0, 2).map((i) => i.src)}
+>
+  {product && (
+    <div>
+      <!-- Data bridge: server-computed values → client script (same contract as product page) -->
+      <div
+        id="page-data"
+        class="sr-only"
+        data-variants={JSON.stringify(product.variants)}
+        data-base-price={basePrice}
+        data-compare-price={comparePrice ?? ""}
+        data-cur={cur}
+        data-is-rtl={isRTL ? "1" : "0"}
+        data-shipping-label={content.shippingLabel}
+        data-shipping-calc={content.shippingCalculated}
+        data-shipping-free={content.shippingFree}
+        data-total-label={content.totalLabel}
+        data-commune-placeholder={content.formCommunePlaceholder}
+        data-commune-loading={content.formCommuneLoading}
+        data-commune-disabled={content.formCommuneDisabled}
+        data-offers={JSON.stringify(product.offers)}
+        data-offer-free-label={content.offerFreeLabel}
+        data-offer-active={content.offerActive}
+        data-offer-unlocked={content.offerUnlocked}
+        data-offer-add-more={content.offerAddMore}
+        data-offer-add-one={content.offerAddOne}
+        data-offer-you-get={content.offerYouGet}
+        data-track-inventory={product.trackInventory ? "1" : "0"}
+        data-out-of-stock-label={content.outOfStock}
+        data-qty-max-stock={content.qtyMaxStock}
+        data-inventory={String(product.inventory)}
+        data-pixel-id={config.pixelId ?? ""}
+        data-phone-invalid={content.formPhoneInvalid}
+        data-product-id={product.id}
+        data-product-name={product.name}
+      />
+
+      <!-- Dynamic data Island (Deferred) -->
+      <ShippingIsland server:defer />
+
+      <!-- ── THE IMAGE STACK — the entire marketing story. Full-bleed on
+            mobile; capped to the order-form column and centered on desktop
+            so ad creatives never stretch across a wide viewport.
+            width/height (intrinsic px, captured at upload) reserve each
+            image's space BEFORE the bytes arrive — no form-jumping layout
+            shift; the soft surface background marks the reserved slot. ── -->
+      <div class="mx-auto w-full max-w-xl">
+        {images.map((image, index) => (
+          <img
+            src={image.src}
+            alt={image.altText ?? product.name}
+            width={image.width ?? undefined}
+            height={image.height ?? undefined}
+            class="block w-full h-auto"
+            style={"background: var(--clr-surface);" + (index > 0 ? " margin-top: " + lp.imageGap + "px;" : "")}
+            loading={index < 3 ? "eager" : "lazy"}
+            fetchpriority={index === 0 ? "high" : undefined}
+            decoding="async"
+          />
+        ))}
+      </div>
+
+      <!-- ── THE COD ORDER FORM — hardcoded, same component as the product page ── -->
+      <div class="px-4 py-8" id="order-section-wrapper">
+        <div class="max-w-xl mx-auto">
+          <OrderForm
+            product={product}
+            content={content}
+            fieldErrors={fieldErrors}
+            serverError={serverError}
+            basePrice={basePrice}
+            defaultVariant={defaultVariant ?? null}
+            cur={cur}
+            isRTL={isRTL}
+            offers={product.offers}
+            defaultVariantId={defaultVariantId}
+            isOutOfStock={isOutOfStock}
+            otpEnabled={config.otpEnabled === true}
+            landingPageSlug={lp.slug}
+          />
+        </div>
+      </div>
+
+      <!-- ── STICKY ORDER CTA — fixed to the bottom while the form is out of
+           view; lp-sticky-cta.ts hides it via IntersectionObserver the moment
+           the form enters the viewport. Anchor scroll (no JS) still works. ── -->
+      {!isOutOfStock && (
+        <a href="#order-section-wrapper" id="lp-sticky-cta" class="btn-primary lp-sticky-cta">
+          {content.orderCta}
+          <Icon name="heroicons:chevron-down" class="w-5 h-5" />
+        </a>
+      )}
+    </div>
+  )}
+
+  {!product && (
+    <div class="flex flex-col items-center justify-center py-24 px-6 text-center">
+      <h1 class="text-2xl font-black" style="color: var(--clr-text)">{content.formTitle}</h1>
+      <p class="mt-2 text-sm font-bold" style="color: var(--clr-text-2)">{content.outOfStock}</p>
+    </div>
+  )}
+</StoreLayout>
+
+<script src="../../theme/scripts/product.ts"></script>
+<script src="../../theme/scripts/lp-sticky-cta.ts"></script>
+<script src="../../theme/scripts/otp-step.ts"></script>
+
+<style>
+  /* Sticky CTA — floats above the image stack until the form scrolls into
+     view (lp-sticky-cta.ts toggles .is-hidden). Colors/radius/shadow come
+     from .btn-primary + tokens; sizes/offsets are layout, not design. */
+  .lp-sticky-cta {
+    position: fixed;
+    bottom: calc(var(--safe-bottom) + 0.75rem);
+    inset-inline: 0;
+    margin-inline: auto;
+    width: min(24rem, calc(100% - 2rem));
+    z-index: 45;
+    box-shadow: var(--shadow-primary);
+    font-weight: 800;
+    transition: transform 0.25s ease, opacity 0.25s ease;
+  }
+  .lp-sticky-cta.is-hidden {
+    transform: translateY(150%);
+    opacity: 0;
+    pointer-events: none;
+  }
+</style>
+<script src="../../theme/scripts/track-abandonment.ts"></script>
+{orderSuccess && (
+  <script
+    is:inline
+    define:vars={{ orderNumber: orderSuccess.orderNumber, total: orderSuccess.total, orderId: orderSuccess.orderId }}
+  >
+    (async () => {
+      // Mark the abandoned-checkout session as converted (fire-and-forget).
+      // Posts directly — the deferred tracking module may not have defined
+      // its global yet when this inline script runs. Bounded wait so a
+      // stalled network can never delay the thank-you page by more than 2.5s.
+      try {
+        var sessionId = sessionStorage.getItem("cod_session_id");
+        if (sessionId) {
+          await Promise.race([
+            fetch("/api/abandoned/convert", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionId: sessionId,
+                orderId: orderId,
+                orderNumber: orderNumber,
+              }),
+              keepalive: true,
+            }).catch(function () {}),
+            new Promise(function (resolve) { setTimeout(resolve, 2500); }),
+          ]);
+          sessionStorage.removeItem("cod_session_id");
+        }
+      } catch (e) {
+        // Non-critical — conversion tracking must never block the redirect
+      }
+      window.location.replace(
+        "/thank-you?order=" +
+          encodeURIComponent(orderNumber) +
+          "&total=" +
+          total +
+          "&oid=" +
+          encodeURIComponent(orderId)
+      );
+    })();
+  </script>
+)}

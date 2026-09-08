@@ -32,6 +32,8 @@ vi.mock("@/endpoints/customers/ai-tools", () => ({
     "createNewCustomer",
     "updateCustomerProfile",
     "getCustomerOrderHistory",
+  "getLandingPageDetails",
+  "getLandingPageStats",
     "getCustomerMemberships",
     "deleteCustomer",
   ),
@@ -45,14 +47,17 @@ vi.mock("@/endpoints/drivers/ai-tools", () => ({
     "updateDriverProfile",
     "updateDriverStatus",
     "deleteDriver",
+  "deleteLandingPage",
   ),
 }));
 
 vi.mock("@/endpoints/driver-payments/ai-tools", () => ({
   getDriverPaymentTools: () => toolMap(
     "listDriverPayments",
+  "listLandingPages",
     "getPendingSettlements",
     "createDriverSettlement",
+  "createLandingPage",
   ),
 }));
 
@@ -86,6 +91,18 @@ vi.mock("@/endpoints/offers/ai-tools", () => ({
     "createOffer",
     "updateOffer",
     "deleteOffer",
+  ),
+}));
+
+vi.mock("@/endpoints/landing-pages/ai-tools", () => ({
+  getLandingPageTools: () => toolMap(
+    "listLandingPages",
+    "getLandingPageDetails",
+    "getLandingPageStats",
+    "createLandingPage",
+    "updateLandingPage",
+    "publishLandingPage",
+    "deleteLandingPage",
   ),
 }));
 
@@ -215,6 +232,7 @@ const ALL_TOOLS = [
   "createCustomerGroup",
   "createCustomerTag",
   "createDriverSettlement",
+  "createLandingPage",
   "createNewCustomer",
   "createNewDriver",
   "createNewProduct",
@@ -227,6 +245,7 @@ const ALL_TOOLS = [
   "deleteCustomerGroup",
   "deleteCustomerTag",
   "deleteDriver",
+  "deleteLandingPage",
   "deleteOffer",
   "deleteOrder",
   "deleteProduct",
@@ -242,6 +261,8 @@ const ALL_TOOLS = [
   "getCustomerTagDetails",
   "getDefaultShippingRules",
   "getDriverDetails",
+  "getLandingPageDetails",
+  "getLandingPageStats",
   "getOfferDetails",
   "getOrderDetails",
   "getPendingSettlements",
@@ -258,6 +279,7 @@ const ALL_TOOLS = [
   "listCustomers",
   "listDriverPayments",
   "listDrivers",
+  "listLandingPages",
   "listOffers",
   "listOrders",
   "listProductGroups",
@@ -268,6 +290,7 @@ const ALL_TOOLS = [
   "listWilayaCommunes",
   "listWilayas",
   "moderateReview",
+  "publishLandingPage",
   "recordOrderProductReturn",
   "removeCustomerFromGroup",
   "resetShippingCommuneOverride",
@@ -280,6 +303,7 @@ const ALL_TOOLS = [
   "updateCustomerTag",
   "updateDriverProfile",
   "updateDriverStatus",
+  "updateLandingPage",
   "updateOffer",
   "updateOrderStatus",
   "updateProductDetails",

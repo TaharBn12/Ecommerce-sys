@@ -65,6 +65,12 @@ export const server = {
         (v) => (v === "" || v == null ? undefined : v),
         z.string().min(10).max(1024).optional()
       ),
+      // Landing page attribution — best-effort: unknown/draft slug leaves
+      // the order unattributed, never blocked (platform extension, LP feature).
+      landingPageSlug: z.preprocess(
+        (v) => (v === "" || v == null ? undefined : v),
+        z.string().min(1).max(60).optional()
+      ),
     }),
     handler: async (input, context) => {
       // Forward the shopper's attribution headers so cod-server records the
@@ -98,6 +104,7 @@ export const server = {
         fbc: input.fbc,
         fbp: input.fbp,
         otpToken: input.otpToken,
+        landingPageSlug: input.landingPageSlug,
       }, forwardedHeaders);
 
       if (!result.success) {

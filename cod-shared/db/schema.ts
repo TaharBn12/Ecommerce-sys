@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, uniqueIndex, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex, index, primaryKey } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 const authNow = sql`(cast(unixepoch('subsecond') * 1000 as integer))`;
@@ -142,6 +142,35 @@ export const communes = sqliteTable("communes", {
   nameAr: text("name_ar").notNull(),
   postalCode: text("postal_code"),
 });
+
+// ─── Carrier geo names ─────────────────────────────────────────────────────────
+
+/**
+ * Per-carrier exact wilaya name strings. Carriers that match addresses by
+ * name (Yalidine) reject parcels whose strings differ from their own
+ * spellings; these rows carry the carrier's exact string for our wilaya IDs.
+ * Carriers absent here keep the reference-table name.
+ */
+export const carrierWilayas = sqliteTable("carrier_wilayas", {
+  carrierCode: text("carrier_code").notNull(),
+  wilayaId: integer("wilaya_id")
+    .notNull()
+    .references(() => wilayas.id),
+  carrierName: text("carrier_name").notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.carrierCode, t.wilayaId] }),
+}));
+
+/** Same contract as carrier_wilayas, one level down. */
+export const carrierCommunes = sqliteTable("carrier_communes", {
+  carrierCode: text("carrier_code").notNull(),
+  communeId: text("commune_id")
+    .notNull()
+    .references(() => communes.id),
+  carrierName: text("carrier_name").notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.carrierCode, t.communeId] }),
+}));
 
 // ─── Shipping Profiles ────────────────────────────────────────────────────────
 
@@ -491,6 +520,10 @@ export const orders = sqliteTable("orders", {
   ipAddress: text("ip_address"),
   /** User-Agent at placement — sent as client_user_agent in CAPI event. */
   userAgent: text("user_agent"),
+
+  // ── Landing page attribution (appended by migration 0019 — keep last) ────
+  /** Landing page the order was placed from (best-effort attribution — never blocks an order). */
+  landingPageId: text("landing_page_id"),
 
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -1071,6 +1104,70 @@ export const offers = sqliteTable("offers", {
 
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+});
+
+// ─── Landing Pages ────────────────────────────────────────────────────────────
+
+/**
+ * A one-product marketing page: an ordered image stack with the COD order
+ * form at the bottom. Merchants create several per product, run ads to each,
+ * and compare which one converts. All marketing copy lives inside the images;
+ * the engine charges the catalog price (no price override — see PR #90).
+ */
+export const landingPages = sqliteTable("landing_pages", {
+  id: text("id").primaryKey(),
+  /** Public URL identifier: [a-z0-9-]{3,60}. Auto-generated `lp-<8char>` default. */
+  slug: text("slug").notNull().unique(),
+  /** Internal label, e.g. "Zinc v3 — carousel ad". Never rendered publicly. */
+  name: text("name").notNull(),
+  /** The single product this page sells. */
+  productId: text("product_id")
+    .notNull()
+    .references(() => products.id),
+  status: text("status", { enum: ["draft", "published", "archived"] })
+    .notNull()
+    .default("draft"),
+
+  // ── Spacing settings (the entire Studio right sidebar) ────────────────────
+  /** Pixels between stacked images. 0 = flush stack. */
+  imageGap: integer("image_gap").notNull().default(0),
+  /** Pixels of page side padding. 0 = full-bleed. */
+  sidePadding: integer("side_padding").notNull().default(0),
+  /** Max content width in pixels. 0 = full width (mobile-first default). */
+  contentMaxWidth: integer("content_max_width").notNull().default(0),
+
+  // ── SEO ───────────────────────────────────────────────────────────────────
+  metaTitle: text("meta_title"),
+  metaDescription: text("meta_description"),
+
+  /** Render count of the published page (non-unique in v1). */
+  views: integer("views").notNull().default(0),
+  publishedAt: text("published_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+/**
+ * One row of the landing page image stack. Mirrors product_images:
+ * R2 object + alt text + position. `source` anticipates the AI-generation
+ * future phase (upload | ai) without carrying any v1 behavior.
+ * `width`/`height` (px, captured client-side at upload) let the storefront
+ * reserve layout space before the bytes arrive — no form-jumping CLS.
+ * Nullable: legacy rows and failed client measurements render without dims.
+ */
+export const landingPageImages = sqliteTable("landing_page_images", {
+  id: text("id").primaryKey(),
+  landingPageId: text("landing_page_id")
+    .notNull()
+    .references(() => landingPages.id, { onDelete: "cascade" }),
+  r2Key: text("r2_key").notNull(),
+  src: text("src").notNull(),
+  altText: text("alt_text"),
+  source: text("source", { enum: ["upload", "ai"] }).notNull().default("upload"),
+  position: integer("position").notNull().default(1),
+  width: integer("width"),
+  height: integer("height"),
+  createdAt: text("created_at").notNull(),
 });
 
 // ─── Dashboard branding ───────────────────────────────────────────────────────

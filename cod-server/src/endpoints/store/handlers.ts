@@ -38,6 +38,57 @@ export async function getStoreProduct(c: Context<AppContext>) {
   return c.json({ success: true, data }, 200);
 }
 
+export async function getStoreLandingPage(c: Context<AppContext>) {
+  const db = getDb(c.env.DB);
+  const slug = c.req.param("slug")!;
+
+  // Two round trips total: the row by slug, then ONE batched call carrying
+  // images + stats + the product ref.
+  const lp = await queries.getLandingPageDetailBySlug(db, slug);
+  if (!lp || lp.status !== "published") {
+    // Unknown, draft, or archived — same answer so nothing leaks.
+    throw new NotFoundError("Landing Page", slug);
+  }
+
+  // The page renders the store product exactly like the product page does —
+  // same shape (variants, offers, inventory, review stats) so the theme's
+  // form + scripts work unmodified. A hidden/unavailable product still
+  // renders: the merchant published the link deliberately; the order engine
+  // guards sellability.
+  const product = lp.product?.handle
+    ? await queries.getStoreProductByHandle(db, lp.product.handle)
+    : null;
+
+  // One render = one view. Atomic single-row UPDATE, deferred via waitUntil
+  // so the write never blocks the render response (Cloudflare's documented
+  // pattern for analytics-after-response; same seam the CAPI trigger uses).
+  // A counting failure is logged and swallowed — it must never break a render.
+  c.executionCtx.waitUntil(
+    queries.incrementLandingPageViews(db, lp.id).catch((err) => {
+      console.error("[landing-pages] view increment failed:", err);
+    }),
+  );
+
+  return c.json(
+    {
+      success: true,
+      data: {
+        id: lp.id,
+        slug: lp.slug,
+        name: lp.name,
+        status: lp.status,
+        imageGap: lp.imageGap,
+        metaTitle: lp.metaTitle,
+        metaDescription: lp.metaDescription,
+        publishedAt: lp.publishedAt,
+        images: lp.images,
+        product,
+      },
+    },
+    200,
+  );
+}
+
 export async function listStoreCategories(c: Context<AppContext>) {
   const db = getDb(c.env.DB);
   const data = await queries.getStoreCategories(db);
@@ -130,11 +181,24 @@ export async function createStoreOrder(c: Context<AppContext>) {
     undefined;
   const userAgent = c.req.header("User-Agent") ?? undefined;
 
+  // Landing page attribution — resolve best-effort BEFORE the customer is
+  // created so a resolution failure leaves zero side effects. A bad slug
+  // never blocks the order; it just leaves it unattributed.
+  let landingPageId: string | null = null;
+  if (data.landingPageSlug) {
+    try {
+      landingPageId = await queries.findPublishedLandingPageIdBySlug(db, data.landingPageSlug);
+    } catch (err) {
+      console.error("[store] landing page attribution lookup failed:", err);
+    }
+  }
+
   const order = await queries.createStoreOrder(db, {
     ...data,
     customerId: customer.id,
     customerName: customer.name,
     deliveryFee,
+    landingPageId,
     ipAddress,
     userAgent,
   });

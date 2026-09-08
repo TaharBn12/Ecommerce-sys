@@ -53,7 +53,14 @@
     "fee_label": "Delivery Fee",
     "fee_not_available": "Not available for this wilaya",
     "station_picker_placeholder": "Search desks...",
-    "loading_stations": "Loading desks..."
+    "loading_stations": "Loading desks...",
+    "delivery_type_label": "Delivery Type",
+    "type_home": "Home delivery",
+    "type_stop_desk": "Stop desk (pickup point)",
+    "type_override_note": "The customer's amount stays unchanged — only how the parcel travels.",
+    "no_desk_match": "No desk matches your search",
+    "no_desks_in_wilaya": "This carrier has no stop desk in",
+    "no_desks_switch_hint": "Switch the delivery type to home to dispatch this order."
   },
   "filters": {
     "status": "Status",

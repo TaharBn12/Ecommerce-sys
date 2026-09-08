@@ -53,7 +53,14 @@
     "fee_label": "Frais de livraison",
     "fee_not_available": "Non disponible pour cette wilaya",
     "station_picker_placeholder": "Rechercher un point de retrait...",
-    "loading_stations": "Chargement des points de retrait..."
+    "loading_stations": "Chargement des points de retrait...",
+    "delivery_type_label": "Type de livraison",
+    "type_home": "Livraison à domicile",
+    "type_stop_desk": "Point de retrait (stop desk)",
+    "type_override_note": "Le montant du client reste inchangé — seule l'acheminement du colis change.",
+    "no_desk_match": "Aucun point de retrait ne correspond à votre recherche",
+    "no_desks_in_wilaya": "Ce transporteur n'a pas de point de retrait dans",
+    "no_desks_switch_hint": "Passez le type de livraison à domicile pour expédier cette commande."
   },
   "filters": {
     "status": "Statut",

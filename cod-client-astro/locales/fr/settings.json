@@ -114,7 +114,10 @@
     "api_key_reveal": "Afficher",
     "api_key_hide": "Masquer",
     "api_key_missing": "Clé API non disponible. Elle apparaîtra ici après votre prochain redéploiement.",
-    "error_load": "Impossible de charger les paramètres de la boutique"
+    "error_load": "Impossible de charger les paramètres de la boutique",
+    "domain_label": "Domaine de la vitrine",
+    "domain_placeholder": "boutique.exemple.com",
+    "domain_hint": "Le domaine personnalisé de votre vitrine. Les liens de partage des pages d'atterrissage en sont dérivés. Laissez vide pour utiliser l'URL par défaut du déploiement."
   },
   "shipping": {
     "title": "Tarifs de livraison",
