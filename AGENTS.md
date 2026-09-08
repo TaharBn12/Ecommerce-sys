@@ -43,6 +43,20 @@ npm run seed:admin` (sign-up is disabled by design).
 `cod-astro/theme01` has extra validators — see
 `cod-astro/theme01/AGENTS.md` for its commands.
 
+## Cloud resource configuration
+
+Resource names and URLs are **not** hardcoded in scripts. The seeders, the
+D1 migration wrapper (`cod-server/scripts/d1.mjs`), the R2 CORS setup and
+the storefront deploy helper all read `<repo-root>/.env` through
+`cod-server/scripts/cloud-env.mjs`. Precedence is
+**`process.env` > `.env` > built-in default**; the committed template is
+`<repo-root>/.env.example`.
+
+Keys: `COD_ACCOUNT_ID`, `COD_DB_NAME`, `COD_R2_BUCKET_NAME`,
+`COD_SERVER_URL`, `COD_MEDIA_DOMAIN`. Add a key to `DEFAULTS` in
+`cloud-env.mjs` and to `.env.example` together — a key in one and not the
+other is how these drift.
+
 ## Verification
 
 - After changing TypeScript: run `npm run typecheck` in the affected package.
@@ -84,6 +98,11 @@ npm run seed:admin` (sign-up is disabled by design).
   workspace members. It keeps a single Vite major across astro/vitest;
   removing it reintroduces the dual-Vite boot crash
   (`Missing field 'moduleType'`). Keep it in sync when astro bumps Vite.
+- `COD_SERVER_URL` defaults to `http://localhost:8787` so local dev works
+  untouched. A deployed Worker can never reach that, so
+  `cod-astro/theme01/scripts/deploy.mjs` refuses to deploy a loopback value
+  unless `--force-local` is passed. Set the real origin in the root `.env`
+  before deploying the storefront.
 - Local D1 state is **shared** through `<repo-root>/.wrangler-shared`:
   cod-server's dev/migrate scripts write there via `--persist-to`, and
   cod-client-astro's astro dev reads the same files via the Cloudflare

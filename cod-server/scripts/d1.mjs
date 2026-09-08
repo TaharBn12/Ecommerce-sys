@@ -12,6 +12,10 @@
  * Usage:
  *   node scripts/d1.mjs execute --remote --command "…"
  *   node scripts/d1.mjs migrations apply --local --persist-to ../.wrangler-shared
+ *
+ * Runs through a shell deliberately: npx resolves to npx.cmd on Windows, which
+ * Node refuses to spawn without one (EINVAL, CVE-2024-27980), and shell mode
+ * does not escape argv for us — so arguments are quoted below instead.
  */
 
 import { execSync } from "node:child_process";

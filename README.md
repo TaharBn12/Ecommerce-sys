@@ -164,16 +164,24 @@ npm ci
 ```
 
 ### 2. Create Cloudflare Resources
+Names are yours to choose — scripts read them from the root `.env`
+(see step 3), so nothing is hardcoded.
+
 ```bash
 wrangler login
-wrangler d1 create codflow-os-db
-wrangler r2 bucket create codflow-images
+wrangler d1 create my-codflow-db
+wrangler r2 bucket create my-codflow-images
 wrangler kv namespace create RATE_LIMIT
 wrangler kv namespace create OAUTH_KV
 ```
 
 ### 3. Configure Environment
 ```bash
+# Repo root — resource names for the seeders, the D1 wrapper, the R2 CORS
+# setup and the storefront deploy helper. Precedence: process.env > .env > default.
+cp .env.example .env
+# Set COD_ACCOUNT_ID, COD_DB_NAME, COD_R2_BUCKET_NAME, COD_SERVER_URL, COD_MEDIA_DOMAIN
+
 # Backend
 cd cod-server
 cp .dev.vars.example .dev.vars
