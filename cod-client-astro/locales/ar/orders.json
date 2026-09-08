@@ -53,7 +53,14 @@
     "fee_label": "رسوم التوصيل",
     "fee_not_available": "غير متوفر لهذه الولاية",
     "station_picker_placeholder": "البحث عن مكاتب...",
-    "loading_stations": "جاري تحميل المكاتب..."
+    "loading_stations": "جاري تحميل المكاتب...",
+    "delivery_type_label": "نوع التوصيل",
+    "type_home": "توصيل إلى المنزل",
+    "type_stop_desk": "استلام من المكتب",
+    "type_override_note": "مبلغ العميل يبقى دون تغيير — يتغير فقط كيفية إرسال الطرد.",
+    "no_desk_match": "لا يوجد مكتب يطابق البحث",
+    "no_desks_in_wilaya": "هذا الناقل لا يملك مكتب استلام في",
+    "no_desks_switch_hint": "بدّل نوع التوصيل إلى المنزل لإرسال هذا الطلب."
   },
   "filters": {
     "status": "الحالة",

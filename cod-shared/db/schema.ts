@@ -143,6 +143,35 @@ export const communes = sqliteTable("communes", {
   postalCode: text("postal_code"),
 });
 
+// ─── Carrier geo names ─────────────────────────────────────────────────────────
+
+/**
+ * Per-carrier exact wilaya name strings. Carriers that match addresses by
+ * name (Yalidine) reject parcels whose strings differ from their own
+ * spellings; these rows carry the carrier's exact string for our wilaya IDs.
+ * Carriers absent here keep the reference-table name.
+ */
+export const carrierWilayas = sqliteTable("carrier_wilayas", {
+  carrierCode: text("carrier_code").notNull(),
+  wilayaId: integer("wilaya_id")
+    .notNull()
+    .references(() => wilayas.id),
+  carrierName: text("carrier_name").notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.carrierCode, t.wilayaId] }),
+}));
+
+/** Same contract as carrier_wilayas, one level down. */
+export const carrierCommunes = sqliteTable("carrier_communes", {
+  carrierCode: text("carrier_code").notNull(),
+  communeId: text("commune_id")
+    .notNull()
+    .references(() => communes.id),
+  carrierName: text("carrier_name").notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.carrierCode, t.communeId] }),
+}));
+
 // ─── Shipping Profiles ────────────────────────────────────────────────────────
 
 /**

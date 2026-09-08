@@ -8,6 +8,7 @@ import { useT } from "@/i18n/react";
 import { SCOPES } from "../../../../../cod-shared/rbac/scopes";
 import {
   listAllDeliveryCompanies,
+  syncCarrierGeoNames,
   syncCompanyStopDesks,
   updateDeliveryCompany,
 } from "@/features/delivery/api";
@@ -16,6 +17,7 @@ import { getProviderConfig } from "@/features/delivery/types";
 import { Alert, PageHeader } from "@/components/ui";
 import { CompanyHeroCard } from "@/features/delivery/components/CompanyHeroCard";
 import { CompanySettingsSection } from "@/features/delivery/components/CompanySettingsSection";
+import { CompanyWebhookEventsCard } from "@/features/delivery/components/CompanyWebhookEventsCard";
 import { notify } from "@/lib/notify";
 
 function Loading() {
@@ -68,6 +70,7 @@ export function CompanyProfileDetail({ providerCode }: { providerCode: string })
   const [loadError, setLoadError] = useState<unknown>(null);
   const [notice, setNotice] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [syncingDesks, setSyncingDesks] = useState(false);
+  const [syncingGeo, setSyncingGeo] = useState(false);
   const [autoValidate, setAutoValidate] = useState(true);
   const [savingAutoValidate, setSavingAutoValidate] = useState(false);
 
@@ -113,6 +116,28 @@ export function CompanyProfileDetail({ providerCode }: { providerCode: string })
       notify.error(message);
     } finally {
       setSyncingDesks(false);
+    }
+  }
+
+  async function handleSyncGeo() {
+    if (!company) return;
+    setNotice(null);
+    setSyncingGeo(true);
+    try {
+      const result = await syncCarrierGeoNames(company.id);
+      const detail = `${result.wilayasMatched} ${t("geo_wilayas")} · ${result.communesMatched} ${t("geo_communes")}`;
+      const message =
+        result.communesUnmapped > 0
+          ? `${t("sync_geo_success")} — ${detail} · ${result.communesUnmapped} ${t("geo_unmapped")}`
+          : `${t("sync_geo_success")} — ${detail}`;
+      setNotice({ message, tone: result.communesUnmapped > 0 ? "success" : "success" });
+      notify.success(message);
+    } catch {
+      const message = t("error_saving");
+      setNotice({ message, tone: "error" });
+      notify.error(message);
+    } finally {
+      setSyncingGeo(false);
     }
   }
 
@@ -210,7 +235,13 @@ export function CompanyProfileDetail({ providerCode }: { providerCode: string })
         onToggleAutoValidate={() => void handleToggleAutoValidate()}
         syncingDesks={syncingDesks}
         onSyncDesks={() => void handleSyncDesks()}
+        syncingGeo={syncingGeo}
+        onSyncGeo={() => void handleSyncGeo()}
       />
+
+      {(providerCode === "yalidine" || providerCode === "zr_express") && (
+        <CompanyWebhookEventsCard company={company} />
+      )}
     </div>
   );
 }

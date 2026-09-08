@@ -54,17 +54,28 @@ export function getProvider(company: ProviderCompany): DeliveryProvider {
     case "yalidine": {
       if (!company.apiToken) throw new Error("Yalidine: X-API-TOKEN (apiToken) is required");
       if (!company.apiUserGuid) throw new Error("Yalidine: X-API-ID (apiUserGuid) is required");
-      // Parse optional from_wilaya_name from notes JSON (sender wilaya on every parcel)
+      // Parse optional config from notes JSON: from_wilaya_name (sender
+      // wilaya on every parcel) + proxy_base_url/proxy_secret (egress relay
+      // for Yalidine's Cloudflare-Worker traffic block — see
+      // scripts/yalidine-egress-proxy.ts).
       let fromWilayaName = "Alger";
+      let proxyBaseUrl: string | undefined;
+      let proxySecret: string | undefined;
       if (company.notes) {
         try {
-          const notesJson = JSON.parse(company.notes) as { from_wilaya_name?: string };
+          const notesJson = JSON.parse(company.notes) as {
+            from_wilaya_name?: string;
+            proxy_base_url?: string;
+            proxy_secret?: string;
+          };
           if (notesJson.from_wilaya_name) fromWilayaName = notesJson.from_wilaya_name;
+          if (notesJson.proxy_base_url) proxyBaseUrl = notesJson.proxy_base_url;
+          if (notesJson.proxy_secret) proxySecret = notesJson.proxy_secret;
         } catch {
-          // Invalid JSON in notes — ignore and use default
+          // Invalid JSON in notes — ignore and use defaults
         }
       }
-      return new YalidineProvider(company.apiToken, company.apiUserGuid, fromWilayaName);
+      return new YalidineProvider(company.apiToken, company.apiUserGuid, fromWilayaName, proxyBaseUrl, proxySecret);
     }
 
     default:

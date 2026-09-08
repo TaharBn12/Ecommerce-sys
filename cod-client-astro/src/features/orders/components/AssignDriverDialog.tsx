@@ -12,6 +12,7 @@ export type OrderForActions = Pick<
   | "orderNumber"
   | "wilaya"
   | "wilayaId"
+  | "commune"
   | "deliveryType"
   | "deliveryMethod"
   | "driverId"

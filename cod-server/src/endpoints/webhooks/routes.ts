@@ -98,16 +98,23 @@ const yalidineWebhookRoute = defineRoute({
   summary: "Yalidine event delivery",
   description: `Receives webhook event batches from Yalidine. One event type per request, multiple events per batch. Each event carries its own idempotency key (\`event_id\`). Always returns 200 — errors are logged internally.
 
+**Signature verification:** when the company's webhook secret is stored, the \`X-Yalidine-Signature\` header (HMAC-SHA256 of the raw body, hex) is verified and mismatching deliveries are rejected with \`400 INVALID_WEBHOOK_PAYLOAD\`. Without a stored secret the endpoint fail-opens (events accepted unverified, warning logged).
+
 **Payload:** \`{ type: "parcel_created" | "parcel_edited" | "parcel_deleted" | "parcel_status_updated" | "parcel_payment_updated", events: [{ event_id, occurred_at, data }] }\`
 
 Invalid payloads are rejected with \`400 INVALID_WEBHOOK_PAYLOAD\`; processing failures surface as \`502 EXTERNAL_API_FAILURE\`.`,
   operationId: "yalidineWebhook",
+  headers: z.object({
+    "X-Yalidine-Signature": z.string().optional().openapi({
+      description: "HMAC-SHA256 of the raw request body, keyed with the webhook secret (hex). Required when a secret is stored.",
+    }),
+  }),
   responses: {
     200: receivedResponse,
     400: webhookErrorResponse(
       "INVALID_WEBHOOK_PAYLOAD",
       "VALIDATION",
-      "Invalid webhook payload (INVALID_WEBHOOK_PAYLOAD)"
+      "Invalid webhook payload or signature (INVALID_WEBHOOK_PAYLOAD)"
     ),
     502: webhookErrorResponse(
       "EXTERNAL_API_FAILURE",

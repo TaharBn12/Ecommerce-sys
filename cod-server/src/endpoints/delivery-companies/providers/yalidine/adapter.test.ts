@@ -257,3 +257,149 @@ describe("YalidineProvider.addRemark (unsupported)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+// ─── Error propagation & carrier error extraction (live-verified shapes) ──────
+// Found in production 2026-09-08: getStopDesks swallowed every failure and
+// the sync reported "0 desks, success" for a dead credential; error bodies
+// (nested {"error":{"message":...}}) surfaced as "not valid JSON".
+
+describe("YalidineProvider error propagation (live-verified shapes)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("getStopDesks THROWS on 401 (nested error.message extracted) — no fake empty success", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        { error: { message: "API ID and/or Token are wrong", code: 401, description: "Unauthorized" } },
+        401,
+      ),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = new YalidineProvider("bad-token", ID);
+    await expect(provider.getStopDesks()).rejects.toThrow(
+      "Yalidine HTTP 401: API ID and/or Token are wrong",
+    );
+  });
+
+  it("getGeoNames THROWS on 403 with the carrier's message", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        { error: { message: "Your access to the api is disabled, please contact us", code: 403, description: "Forbidden" } },
+        403,
+      ),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = new YalidineProvider("banned", ID);
+    await expect(provider.getGeoNames()).rejects.toThrow(
+      "Yalidine HTTP 403: Your access to the api is disabled, please contact us",
+    );
+  });
+
+  it("non-JSON error body (HTML edge 403) still reports the status", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response("<html><body>403 Forbidden</body></html>", {
+          status: 403,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = new YalidineProvider("t", ID);
+    await expect(provider.getStopDesks()).rejects.toThrow("Yalidine HTTP 403");
+  });
+
+  it("flat {message} validation errors extract too (create parcel path)", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ message: "The do_insurance parameter must be of type boolean" }, 400),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = new YalidineProvider(TOKEN, ID);
+    await expect(
+      provider.createShipment(baseInput),
+    ).rejects.toThrow("Yalidine HTTP 400: The do_insurance parameter must be of type boolean");
+  });
+
+  it("getStopDesks still succeeds across pages when credentials are fine", async () => {
+    let call = 0;
+    const fetchMock = vi.fn(async () => {
+      call++;
+      if (call === 1) {
+        return jsonResponse({
+          has_more: true,
+          total_data: 2,
+          data: [{ center_id: 163001, name: "Centre de Bordj El Kiffan", address: "a", gps: "", commune_id: 1630, commune_name: "Bordj El Kiffan", wilaya_id: 16, wilaya_name: "Alger" }],
+        });
+      }
+      return jsonResponse({
+        has_more: false,
+        total_data: 2,
+        data: [{ center_id: 190201, name: "Centre de Aïn Arnat", address: "b", gps: "", commune_id: 1902, commune_name: "Aïn Arnat", wilaya_id: 19, wilaya_name: "Sétif" }],
+      });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = new YalidineProvider(TOKEN, ID);
+    const desks = await provider.getStopDesks();
+    expect(desks).toHaveLength(2);
+    expect(desks[0]).toMatchObject({ code: "163001", wilayaId: 16 });
+    expect(desks[1]).toMatchObject({ code: "190201", wilayaId: 19 });
+  });
+});
+
+// ─── Egress proxy wiring (Yalidine blocks Cloudflare Workers — 403/1106) ──────
+
+describe("YalidineProvider egress proxy", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("routes every call through proxyBaseUrl when set, with the proxy secret header", async () => {
+    const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) =>
+      jsonResponse({ has_more: false, total_data: 0, data: [] }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = new YalidineProvider(TOKEN, ID, "Alger", "https://relay.example.deno.dev/", "proxy-secret-1");
+    await provider.getStopDesks();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://relay.example.deno.dev/centers/?page_size=1000&page=1",
+    );
+    const headers = fetchMock.mock.calls[0][1] as RequestInit;
+    expect((headers.headers as Record<string, string>)["X-Proxy-Secret"]).toBe("proxy-secret-1");
+    expect((headers.headers as Record<string, string>)["X-API-TOKEN"]).toBe(TOKEN);
+  });
+
+  it("trailing slashes on the proxy base are normalized", async () => {
+    const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) =>
+      jsonResponse({ has_more: false, total_data: 0, data: [] }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = new YalidineProvider(TOKEN, ID, "Alger", "https://relay.example.deno.dev///", "s");
+    await provider.getGeoNames();
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://relay.example.deno.dev/wilayas/?page_size=1000",
+    );
+  });
+
+  it("without a proxy the direct base URL is used and no proxy header is sent", async () => {
+    const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) =>
+      jsonResponse({ has_more: false, total_data: 0, data: [] }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = new YalidineProvider(TOKEN, ID);
+    await provider.getGeoNames();
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.yalidine.app/v1/wilayas/?page_size=1000",
+    );
+    const headers = fetchMock.mock.calls[0][1] as RequestInit;
+    expect((headers.headers as Record<string, string>)["X-Proxy-Secret"]).toBeUndefined();
+  });
+});

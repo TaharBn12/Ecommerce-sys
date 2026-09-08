@@ -726,12 +726,16 @@ export async function updateOrderTracking(
   orderId: string,
   trackingNumber: string,
   trackingUrl?: string,
+  deliveryType?: "home" | "stop_desk",
 ) {
   await db
     .update(orders)
     .set({
       trackingNumber,
       trackingUrl: trackingUrl ?? null,
+      // Dispatch-time delivery-type override: persisted only on successful
+      // dispatch so the order records what the carrier actually accepted.
+      ...(deliveryType !== undefined ? { deliveryType } : {}),
       updatedAt: new Date().toISOString(),
     })
     .where(eq(orders.id, orderId));

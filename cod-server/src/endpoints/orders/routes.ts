@@ -312,8 +312,16 @@ const dispatchToCompanyRoute = defineRoute({
     companyId: z.string().optional().openapi({
       description: "Override the order's assigned company",
     }),
+    deliveryType: z.enum(["home", "stop_desk"]).optional().openapi({
+      description:
+        "Override the order's delivery type. Resolves the stop-desk dead end: a stop-desk " +
+        "order can be dispatched as home delivery (no station required), and a home order " +
+        "can be dispatched to a stop desk (station required). Persisted on the order on " +
+        "successful dispatch. The charged COD is unchanged — it was confirmed by the customer " +
+        "with the original type.",
+    }),
     stationCode: z.string().optional().openapi({
-      description: "Stop-desk station code. Required when deliveryType is stop_desk",
+      description: "Stop-desk station code. Required when the effective deliveryType is stop_desk",
     }),
     remarks: z.string().optional().openapi({
       description: "Delivery remarks passed to the provider",

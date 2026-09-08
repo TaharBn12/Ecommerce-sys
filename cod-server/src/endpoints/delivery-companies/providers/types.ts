@@ -187,4 +187,16 @@ export interface DeliveryProvider {
    * Not all providers support this — check before calling.
    */
   validateReturns?(trackingNumbers: string[]): Promise<boolean>;
+
+  /**
+   * Fetch the carrier's wilaya + commune name lists (the strings the carrier
+   * itself matches addresses against). Commune rows carry the carrier's
+   * wilaya_id so matching can be scoped per wilaya. Used by the geo-name sync
+   * to build the per-carrier name map. Not all providers match by name —
+   * check before calling.
+   */
+  getGeoNames?(): Promise<{
+    wilayas: Array<{ id: number; name: string }>;
+    communes: Array<{ id: number; name: string; wilayaId: number }>;
+  }>;
 }

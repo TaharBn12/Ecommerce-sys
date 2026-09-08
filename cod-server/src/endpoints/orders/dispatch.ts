@@ -18,6 +18,7 @@ import { getDeliveryCompanyRaw } from "@/endpoints/delivery-companies/queries";
 import { createShipmentRecord, setShipmentValidated, getShipmentByOrder, logApiCall } from "@/endpoints/delivery-companies/providers/shipments";
 import { NotFoundError, BusinessLogicError, ValidationError, ExternalApiError } from "@/lib/errors/classes";
 import { ERROR_CODES } from "../../../../cod-shared/errors/codes";
+import { resolveCarrierWilayaName, resolveCarrierCommuneName } from "../../../../cod-shared/queries/carrier-geo";
 
 // Sentinel persisted in companyShipments.labelUrl when the carrier returns no
 // label URL at create time but exposes one via a separate API (ZR Express:
@@ -106,8 +107,45 @@ export async function dispatchToCompany(c: Context<AppContext>) {
     throw new ValidationError("Wilaya or commune not found in reference tables", ERROR_CODES.MISSING_WILAYA_COMMUNE);
   }
 
+  // Yalidine matches addresses by EXACT carrier-side strings; our reference
+  // names differ for ~25% of communes (accents/spellings). When a geo map
+  // exists (sync-geo), dispatch with the carrier's exact string instead.
+  let wilayaName = wilayaRow.name;
+  let communeName = communeRow.name;
+  if (company.code === "yalidine") {
+    const [carrierWilaya, carrierCommune] = await Promise.all([
+      resolveCarrierWilayaName(db, "yalidine", order.wilayaId),
+      resolveCarrierCommuneName(db, "yalidine", order.communeId),
+    ]);
+    if (carrierWilaya) wilayaName = carrierWilaya;
+    if (carrierCommune) communeName = carrierCommune;
+    else if (communeRow.name !== communeRow.name.normalize("NFD")) {
+      // No map row and our name carries combining marks — a name-matching
+      // carrier will reject it. Nudge the admin to sync instead of letting
+      // the carrier answer a cryptic per-parcel failure.
+      console.warn(
+        `[dispatch] no yalidine geo mapping for commune=${order.communeId} (${communeRow.name}) — run sync-geo`
+      );
+    }
+  }
+
+  // Delivery-type override (merchant-side, dispatch modal): resolves the
+  // stop-desk dead end — a stop-desk order whose carrier has no desk in the
+  // wilaya dispatches as home delivery, and vice versa. Read through unknown
+  // like fragile (the Record<string, string> cast on body is not truthful).
+  const deliveryTypeRaw = (body as Record<string, unknown>).deliveryType;
+  const bodyDeliveryType: "home" | "stop_desk" | undefined =
+    deliveryTypeRaw === "home" || deliveryTypeRaw === "stop_desk"
+      ? deliveryTypeRaw
+      : undefined;
+  const effectiveDeliveryType = bodyDeliveryType ?? order.deliveryType;
+
   // station_code: prefer stored value on the order; allow request body to override.
-  const stationCode = body.stationCode?.trim() || order.stationCode || undefined;
+  // Only meaningful for stop-desk dispatches — a home override never carries one.
+  const stationCode =
+    effectiveDeliveryType === "stop_desk"
+      ? body.stationCode?.trim() || order.stationCode || undefined
+      : undefined;
   const remarks = body.remarks;
   const weight   = body.weight   != null ? Number(body.weight)   : (order.weight   ?? undefined);
   // body.fragile arrives as a JS boolean from c.req.json(); the surrounding
@@ -117,12 +155,13 @@ export async function dispatchToCompany(c: Context<AppContext>) {
     ? fragileRaw === true || fragileRaw === "true" || fragileRaw === "1"
     : (order.isFragile ?? undefined);
 
-  // Stop-desk orders must have a station code — required by all providers.
-  if (order.deliveryType === "stop_desk" && !stationCode) {
+  // Stop-desk dispatches must have a station code — required by all providers.
+  // The EFFECTIVE type decides (an override to home lifts the requirement).
+  if (effectiveDeliveryType === "stop_desk" && !stationCode) {
     throw new ValidationError(
       "Stop-desk orders require a station code. Select a pickup-point station before dispatching.",
       ERROR_CODES.MISSING_STATION_CODE,
-      { orderId, deliveryType: order.deliveryType }
+      { orderId, deliveryType: effectiveDeliveryType }
     );
   }
 
@@ -162,11 +201,11 @@ export async function dispatchToCompany(c: Context<AppContext>) {
       phone: order.phone,
       address: order.address ?? "",
       wilayaId: order.wilayaId,
-      wilaya: wilayaRow.name,
-      commune: communeRow.name,
+      wilaya: wilayaName,
+      commune: communeName,
       amount: order.price + (order.deliveryFee ?? 0),
       productDescription,
-      stopDesk: order.deliveryType === "stop_desk",
+      stopDesk: effectiveDeliveryType === "stop_desk",
       stationCode,
       reference: order.orderNumber,
       remarks: remarks ?? order.notes ?? undefined,
@@ -187,7 +226,7 @@ export async function dispatchToCompany(c: Context<AppContext>) {
       rawResponse: result.rawResponse,
     });
 
-    await queries.updateOrderTracking(db, order.id, result.trackingNumber);
+    await queries.updateOrderTracking(db, order.id, result.trackingNumber, undefined, bodyDeliveryType);
 
     const dispatchUser = c.get("user");
     const PRE_DISPATCH_STATUSES = ["new", "confirmed", "unreachable", "preparing", "ready", "assigned", "dispatched"];
@@ -471,6 +510,18 @@ export async function bulkDispatch(c: Context<AppContext>) {
       continue;
     }
 
+    // Yalidine: dispatch with the carrier's exact geo strings when mapped.
+    let wilayaName = wilayaRow.name;
+    let communeName = communeRow.name;
+    if (company.code === "yalidine") {
+      const [carrierWilaya, carrierCommune] = await Promise.all([
+        resolveCarrierWilayaName(db, "yalidine", order.wilayaId),
+        resolveCarrierCommuneName(db, "yalidine", order.communeId),
+      ]);
+      if (carrierWilaya) wilayaName = carrierWilaya;
+      if (carrierCommune) communeName = carrierCommune;
+    }
+
     validOrders.push({
       order,
       input: {
@@ -479,8 +530,8 @@ export async function bulkDispatch(c: Context<AppContext>) {
         phone: order.phone,
         address: order.address ?? "",
         wilayaId: order.wilayaId,
-        wilaya: wilayaRow.name,
-        commune: communeRow.name,
+        wilaya: wilayaName,
+        commune: communeName,
         amount: order.price + (order.deliveryFee ?? 0),
         productDescription: order.orderNumber,
         stopDesk: order.deliveryType === "stop_desk",

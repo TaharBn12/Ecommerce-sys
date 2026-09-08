@@ -32,7 +32,22 @@ export interface UpdateWebhookEventData {
  *
  * If (provider, event_id) already exists → returns isDuplicate=true.
  * The caller must skip all processing when isDuplicate=true.
+ *
+ * Duplicate detection walks the error CAUSE CHAIN: Drizzle wraps the raw D1
+ * error, so "UNIQUE constraint failed" sits on a nested cause, not the
+ * top-level message — message-only matching made every duplicate delivery
+ * (Yalidine's documented retries) throw 500 instead of deduplicating, which
+ * would eventually get the webhook auto-disabled by the carrier.
  */
+function isUniqueViolation(err: unknown): boolean {
+  let cause: unknown = err;
+  for (let depth = 0; cause instanceof Error && depth < 5; depth++) {
+    if (cause.message.includes("UNIQUE constraint failed")) return true;
+    cause = (cause as Error & { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export async function insertWebhookEvent(
   db: AppDb,
   data: InsertWebhookEventData,
@@ -54,11 +69,7 @@ export async function insertWebhookEvent(
     });
     return { id, isDuplicate: false };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (
-      message.includes("UNIQUE constraint failed") ||
-      message.includes("SQLITE_CONSTRAINT")
-    ) {
+    if (isUniqueViolation(err)) {
       return { id: "", isDuplicate: true };
     }
     throw err;

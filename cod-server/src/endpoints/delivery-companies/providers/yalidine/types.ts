@@ -149,3 +149,37 @@ export interface YalidineHistoryResponse {
   data: YalidineHistoryItem[];
   links?: { self: string; next?: string };
 }
+
+// ─── Wilayas / Communes name lists ─────────────────────────────────────────────
+// GET /v1/wilayas and GET /v1/communes — the exact name strings Yalidine
+// matches parcel addresses against (the geo-name sync source).
+
+export interface YalidineWilayaItem {
+  id: number;
+  name: string;
+  zone: number;
+  is_deliverable: number;
+}
+
+export interface YalidineWilayaList {
+  has_more: boolean;
+  total_data: number;
+  data: YalidineWilayaItem[];
+  links?: { self: string; next?: string };
+}
+
+export interface YalidineCommuneItem {
+  id: number;
+  name: string;
+  wilaya_id: number;
+  wilaya_name: string;
+  has_stop_desk: number;
+  is_deliverable: number;
+}
+
+export interface YalidineCommuneList {
+  has_more: boolean;
+  total_data: number;
+  data: YalidineCommuneItem[];
+  links?: { self: string; next?: string };
+}

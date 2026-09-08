@@ -33,6 +33,7 @@ import * as resolveFee from "./resolve-fee";
 import * as deliveryCompanyQueries from "@/endpoints/delivery-companies/queries";
 import * as shipments from "@/endpoints/delivery-companies/providers/shipments";
 import * as registry from "@/endpoints/delivery-companies/providers/registry";
+import * as carrierGeo from "../../../../cod-shared/queries/carrier-geo";
 
 vi.mock("@/db", () => ({ getDb: vi.fn(() => mockDb) }));
 vi.mock("./queries");
@@ -57,6 +58,7 @@ vi.mock("@/workflows/capi-helpers", () => ({
 vi.mock("@/endpoints/delivery-companies/queries");
 vi.mock("@/endpoints/delivery-companies/providers/shipments");
 vi.mock("@/endpoints/delivery-companies/providers/registry");
+vi.mock("../../../../cod-shared/queries/carrier-geo");
 
 const NOW = new Date().toISOString();
 let mockDb: any;
@@ -553,6 +555,246 @@ describe("Orders — targeted business-logic tests", () => {
       expect(res.status).toBe(201);
       expect(mockProvider.createShipment).toHaveBeenCalledWith(
         expect.objectContaining({ amount: 9600 })
+      );
+    });
+
+    it("yalidine dispatch resolves the carrier's exact geo strings when a map exists", async () => {
+      // orderRow's wilaya/commune resolve from reference tables as
+      // "Alger"/"Alger Centre"-style local names — the carrier map must
+      // override them with Yalidine's exact strings (Aïn Arnat case).
+      vi.mocked(queries.getOrderById).mockResolvedValue(
+        orderRow({ status: "ready", wilayaId: 19, communeId: "c-19-026" }) as any
+      );
+      vi.mocked(deliveryCompanyQueries.getDeliveryCompanyRaw).mockResolvedValue(
+        companyRow({ code: "yalidine", autoValidate: false }) as any
+      );
+      vi.mocked(shipments.createShipmentRecord).mockResolvedValue("shp_1" as any);
+      vi.mocked(shipments.logApiCall).mockResolvedValue(undefined as any);
+      vi.mocked(queries.updateOrderTracking).mockResolvedValue(undefined as any);
+      vi.mocked(queries.updateOrderStatus).mockResolvedValue(undefined as any);
+      vi.mocked(carrierGeo.resolveCarrierWilayaName).mockResolvedValue("Sétif");
+      vi.mocked(carrierGeo.resolveCarrierCommuneName).mockResolvedValue("Aïn Arnat");
+
+      const mockProvider = {
+        createShipment: vi.fn(async () => ({
+          trackingNumber: "yal-TEST01",
+          labelUrl: "https://yalidine.app/app/bordereau.php?tracking=yal-TEST01",
+          rawResponse: "{}",
+        })),
+        validateShipment: vi.fn(async () => true),
+      };
+      vi.mocked(registry.getProvider).mockReturnValue(mockProvider as any);
+      vi.mocked(registry.isEcotrackCompany).mockReturnValue(false);
+
+      mockDb = {
+        select: vi.fn(() => ({
+          from: vi.fn(() => ({
+            where: vi.fn(() => ({
+              get: vi.fn(async () => ({ name: "Setif", nameAr: "سطيف" })),
+            })),
+          })),
+        })),
+        insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
+        update: vi.fn(() => ({ set: vi.fn(() => ({ where: vi.fn(async () => undefined) })) })),
+      };
+
+      const res = await app.request("/api/orders/ord_1/dispatch", { method: "POST" });
+
+      expect(res.status).toBe(201);
+      expect(mockProvider.createShipment).toHaveBeenCalledWith(
+        expect.objectContaining({ wilaya: "Sétif", commune: "Aïn Arnat" })
+      );
+      // Map rows for BOTH wilaya and commune were consulted.
+      expect(carrierGeo.resolveCarrierWilayaName).toHaveBeenCalledWith(
+        expect.anything(), "yalidine", 19
+      );
+      expect(carrierGeo.resolveCarrierCommuneName).toHaveBeenCalledWith(
+        expect.anything(), "yalidine", "c-19-026"
+      );
+    });
+
+    it("non-yalidine carriers keep reference-table names (no geo resolution)", async () => {
+      vi.mocked(queries.getOrderById).mockResolvedValue(orderRow({ status: "ready" }) as any);
+      vi.mocked(deliveryCompanyQueries.getDeliveryCompanyRaw).mockResolvedValue(
+        companyRow({ code: "noest", autoValidate: false }) as any
+      );
+      vi.mocked(shipments.createShipmentRecord).mockResolvedValue("shp_1" as any);
+      vi.mocked(shipments.logApiCall).mockResolvedValue(undefined as any);
+      vi.mocked(queries.updateOrderTracking).mockResolvedValue(undefined as any);
+      vi.mocked(queries.updateOrderStatus).mockResolvedValue(undefined as any);
+      vi.mocked(carrierGeo.resolveCarrierWilayaName).mockClear();
+      vi.mocked(carrierGeo.resolveCarrierCommuneName).mockClear();
+
+      const mockProvider = {
+        createShipment: vi.fn(async () => ({
+          trackingNumber: "NE123",
+          labelUrl: null,
+          rawResponse: "{}",
+        })),
+        validateShipment: vi.fn(async () => true),
+      };
+      vi.mocked(registry.getProvider).mockReturnValue(mockProvider as any);
+      vi.mocked(registry.isEcotrackCompany).mockReturnValue(false);
+
+      mockDb = {
+        select: vi.fn(() => ({
+          from: vi.fn(() => ({
+            where: vi.fn(() => ({
+              get: vi.fn(async () => ({ name: "Alger", nameAr: "الجزائر" })),
+            })),
+          })),
+        })),
+        insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
+        update: vi.fn(() => ({ set: vi.fn(() => ({ where: vi.fn(async () => undefined) })) })),
+      };
+
+      const res = await app.request("/api/orders/ord_1/dispatch", { method: "POST" });
+
+      expect(res.status).toBe(201);
+      expect(mockProvider.createShipment).toHaveBeenCalledWith(
+        expect.objectContaining({ wilaya: "Alger" })
+      );
+      expect(carrierGeo.resolveCarrierWilayaName).not.toHaveBeenCalled();
+      expect(carrierGeo.resolveCarrierCommuneName).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── 5b. deliveryType override (dispatch modal dead-end resolution) ───────
+
+  describe("POST /api/orders/{id}/dispatch — deliveryType override", () => {
+    async function setupDispatchMocks(orderOverrides: Record<string, any>) {
+      vi.mocked(queries.getOrderById).mockResolvedValue(orderRow(orderOverrides) as any);
+      vi.mocked(deliveryCompanyQueries.getDeliveryCompanyRaw).mockResolvedValue(
+        companyRow({ autoValidate: false }) as any
+      );
+      vi.mocked(shipments.createShipmentRecord).mockResolvedValue("shp_1" as any);
+      vi.mocked(shipments.logApiCall).mockResolvedValue(undefined as any);
+      vi.mocked(queries.updateOrderTracking).mockResolvedValue(undefined as any);
+      vi.mocked(queries.updateOrderStatus).mockResolvedValue(undefined as any);
+
+      const mockProvider = {
+        createShipment: vi.fn(async () => ({
+          trackingNumber: "TRK-OVR",
+          labelUrl: null,
+          rawResponse: "{}",
+        })),
+        validateShipment: vi.fn(async () => true),
+      };
+      vi.mocked(registry.getProvider).mockReturnValue(mockProvider as any);
+      vi.mocked(registry.isEcotrackCompany).mockReturnValue(false);
+
+      mockDb = {
+        select: vi.fn(() => ({
+          from: vi.fn(() => ({
+            where: vi.fn(() => ({
+              get: vi.fn(async () => ({ name: "Alger", nameAr: "الجزائر" })),
+            })),
+          })),
+        })),
+        insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
+        update: vi.fn(() => ({ set: vi.fn(() => ({ where: vi.fn(async () => undefined) })) })),
+      };
+      return mockProvider;
+    }
+
+    it("stop_desk order overridden to home dispatches WITHOUT a station and persists the override", async () => {
+      const mockProvider = await setupDispatchMocks({
+        status: "ready",
+        deliveryType: "stop_desk",
+        stationCode: null,
+      });
+
+      const res = await app.request("/api/orders/ord_1/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: "comp_1", deliveryType: "home" }),
+      });
+
+      expect(res.status).toBe(201);
+      // The carrier receives a HOME delivery — no stop-desk flag, no station.
+      expect(mockProvider.createShipment).toHaveBeenCalledWith(
+        expect.objectContaining({ stopDesk: false, stationCode: undefined })
+      );
+      // The override is persisted with the tracking number (one query).
+      expect(queries.updateOrderTracking).toHaveBeenCalledWith(
+        expect.anything(), "ord_1", "TRK-OVR", undefined, "home"
+      );
+    });
+
+    it("home order overridden to stop_desk REQUIRES a station code (400)", async () => {
+      await setupDispatchMocks({
+        status: "ready",
+        deliveryType: "home",
+        stationCode: null,
+      });
+
+      const res = await app.request("/api/orders/ord_1/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: "comp_1", deliveryType: "stop_desk" }),
+      });
+
+      expect(res.status).toBe(400);
+      const body: any = await res.json();
+      expect(body.code).toBe(ERROR_CODES.MISSING_STATION_CODE);
+    });
+
+    it("stop_desk override WITH station code dispatches as stop-desk and persists it", async () => {
+      const mockProvider = await setupDispatchMocks({
+        status: "ready",
+        deliveryType: "home",
+        stationCode: null,
+      });
+
+      const res = await app.request("/api/orders/ord_1/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId: "comp_1",
+          deliveryType: "stop_desk",
+          stationCode: "163001",
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      expect(mockProvider.createShipment).toHaveBeenCalledWith(
+        expect.objectContaining({ stopDesk: true, stationCode: "163001" })
+      );
+      expect(queries.updateOrderTracking).toHaveBeenCalledWith(
+        expect.anything(), "ord_1", "TRK-OVR", undefined, "stop_desk"
+      );
+    });
+
+    it("no override: stop_desk order without station still 400s (regression)", async () => {
+      await setupDispatchMocks({
+        status: "ready",
+        deliveryType: "stop_desk",
+        stationCode: null,
+      });
+
+      const res = await app.request("/api/orders/ord_1/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: "comp_1" }),
+      });
+
+      expect(res.status).toBe(400);
+      const body: any = await res.json();
+      expect(body.code).toBe(ERROR_CODES.MISSING_STATION_CODE);
+    });
+
+    it("no override: deliveryType is NOT rewritten on the order (no persistence arg)", async () => {
+      await setupDispatchMocks({ status: "ready", deliveryType: "home" });
+
+      const res = await app.request("/api/orders/ord_1/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: "comp_1" }),
+      });
+
+      expect(res.status).toBe(201);
+      expect(queries.updateOrderTracking).toHaveBeenCalledWith(
+        expect.anything(), "ord_1", "TRK-OVR", undefined, undefined
       );
     });
   });

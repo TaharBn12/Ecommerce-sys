@@ -46,22 +46,31 @@ export function DispatchCompanyDialog({
   const [loadingDesks, setLoadingDesks] = useState(false);
   const [deskQuery, setDeskQuery] = useState("");
   const [stationCode, setStationCode] = useState("");
+  // Effective delivery type: starts as the order's type; the merchant can
+  // switch it here (Y2.1 engine override) — resolves the stop-desk dead end
+  // when the carrier has no desk in the order's wilaya.
+  const [deliveryType, setDeliveryType] = useState<"home" | "stop_desk">(
+    order.deliveryType === "stop_desk" ? "stop_desk" : "home",
+  );
   const [remarks, setRemarks] = useState("");
   const [weight, setWeight] = useState("");
   const [fragile, setFragile] = useState(false);
   const [busy, setBusy] = useState(false);
   const selectedCompany = companies.find((company) => company.id === companyId);
   const fields = dispatchFieldSupport(selectedCompany?.code ?? "");
-  const isStopDesk = order.deliveryType === "stop_desk";
+  const isStopDesk = deliveryType === "stop_desk";
+  const typeOverridden = deliveryType !== order.deliveryType;
 
+  // Desks are scoped to the ORDER'S WILAYA (server-side filter) — desks in
+  // other wilayas are never offered. Only fetched for stop-desk dispatches.
   useEffect(() => {
-    if (!companyId || !isStopDesk) {
+    if (!companyId || !isStopDesk || !order.wilayaId) {
       setDesks([]);
       return;
     }
     let alive = true;
     setLoadingDesks(true);
-    listStopDesks(companyId)
+    listStopDesks(companyId, order.wilayaId)
       .then((rows) => {
         if (alive) setDesks(rows);
       })
@@ -74,8 +83,9 @@ export function DispatchCompanyDialog({
     return () => {
       alive = false;
     };
-  }, [companyId, isStopDesk]);
+  }, [companyId, isStopDesk, order.wilayaId]);
 
+  // Search filters within the wilaya-scoped rows; no cross-wilaya fallback.
   const visibleDesks = useMemo(() => {
     const query = deskQuery.trim().toLocaleLowerCase();
     if (query) {
@@ -85,11 +95,24 @@ export function DispatchCompanyDialog({
           .includes(query),
       );
     }
-    const wilayaDesks = order.wilayaId
-      ? desks.filter((desk) => desk.wilayaId === order.wilayaId)
-      : [];
-    return wilayaDesks.length > 0 ? wilayaDesks : desks;
-  }, [deskQuery, desks, order.wilayaId]);
+    return desks;
+  }, [deskQuery, desks]);
+
+  // Pre-select the desk serving the order's commune when desks arrive and
+  // no explicit pick has been made yet.
+  useEffect(() => {
+    if (isStopDesk && desks.length > 0 && !stationCode && order.commune) {
+      const match = desks.find(
+        (desk) =>
+          desk.commune?.toLocaleLowerCase() ===
+          order.commune?.toLocaleLowerCase(),
+      );
+      if (match) setStationCode(match.code);
+    }
+    // stationCode intentionally not a dependency — pre-selection runs only
+    // on desk loads, never on a manual clear.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desks, isStopDesk, order.commune]);
 
   async function submit() {
     if (!companyId || (isStopDesk && !stationCode.trim())) return;
@@ -99,7 +122,10 @@ export function DispatchCompanyDialog({
       const parsedWeight = Number(weight);
       const response = await dispatchOrder(order.id, {
         companyId,
-        stationCode: stationCode.trim() || undefined,
+        // The override is only sent when the merchant actually switched —
+        // an untouched dialog never rewrites the order's delivery type.
+        ...(typeOverridden ? { deliveryType } : {}),
+        stationCode: isStopDesk ? stationCode.trim() || undefined : undefined,
         remarks: fields.remarks && remarks.trim() ? remarks.trim() : undefined,
         weight: fields.weight && parsedWeight > 0 ? parsedWeight : undefined,
         fragile: fields.fragile && fragile ? true : undefined,
@@ -146,6 +172,27 @@ export function DispatchCompanyDialog({
               </option>
             ))}
           </Select>
+        </Field>
+
+        <Field label={t("dispatch_dialog.delivery_type_label")}>
+          <Select
+            value={deliveryType}
+            onChange={(event) => {
+              setDeliveryType(
+                event.currentTarget.value === "stop_desk" ? "stop_desk" : "home",
+              );
+              setStationCode("");
+              setDeskQuery("");
+            }}
+          >
+            <option value="home">{t("dispatch_dialog.type_home")}</option>
+            <option value="stop_desk">{t("dispatch_dialog.type_stop_desk")}</option>
+          </Select>
+          {typeOverridden && (
+            <p className="mt-1.5 text-xs font-medium text-muted-foreground">
+              {t("dispatch_dialog.type_override_note")}
+            </p>
+          )}
         </Field>
 
         {isStopDesk && companyId && (
@@ -201,7 +248,7 @@ export function DispatchCompanyDialog({
                   ))}
                   {visibleDesks.length === 0 && (
                     <p className="py-4 text-center text-xs text-muted-foreground">
-                      {t("dispatch_dialog.station_code_hint")}
+                      {t("dispatch_dialog.no_desk_match")}
                     </p>
                   )}
                 </div>
@@ -215,12 +262,20 @@ export function DispatchCompanyDialog({
                 />
               </div>
             ) : (
-              <Input
-                value={stationCode}
-                onChange={(event) => setStationCode(event.currentTarget.value)}
-                placeholder={t("dispatch_dialog.station_code_placeholder")}
-                className="font-mono"
-              />
+              // No desks in the order's wilaya for this carrier — the dead
+              // end. The delivery-type select above IS the way out; the hint
+              // makes the resolution explicit.
+              <div
+                role="alert"
+                className="rounded-lg border border-border bg-muted/50 p-3 text-sm"
+              >
+                <p className="font-semibold text-foreground">
+                  {`${t("dispatch_dialog.no_desks_in_wilaya")} ${order.wilaya ?? "-"}`}
+                </p>
+                <p className="mt-0.5 text-xs font-medium text-muted-foreground">
+                  {t("dispatch_dialog.no_desks_switch_hint")}
+                </p>
+              </div>
             )}
           </Field>
         )}
