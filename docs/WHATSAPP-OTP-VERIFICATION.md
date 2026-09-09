@@ -159,7 +159,9 @@ reversible by re-enabling.
 
 - **One-time setup:** apply migration `0012_store_otp_config.sql` to the
   remote D1 before the feature can be configured in production
-  (`npx wrangler d1 migrations apply codflow-os-db --remote` in `cod-server`).
+  (`npx wrangler d1 migrations apply <your-db-name> --remote` in `cod-server`;
+  the DB name comes from `COD_DB_NAME` in the root `.env` — or use
+  `npm run db:migrate:remote`).
 - The dzverify key is stored per-store in D1 (`store_otp_config`), never in
   wrangler secrets, and never sent to the browser — it is merchant integration
   config, the same as carrier tokens and the Meta pixel token.

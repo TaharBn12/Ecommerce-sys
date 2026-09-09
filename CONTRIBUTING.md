@@ -113,8 +113,8 @@ npm ci
 
 ```bash
 wrangler login
-wrangler d1 create codflow-os-db
-wrangler r2 bucket create codflow-images
+wrangler d1 create <your-db-name>       # set COD_DB_NAME in the root .env
+wrangler r2 bucket create <your-bucket> # set COD_R2_BUCKET_NAME in the root .env
 wrangler kv namespace create RATE_LIMIT
 wrangler kv namespace create OAUTH_KV
 ```
@@ -179,7 +179,8 @@ Open **three terminals**, one per package (D1 state is shared through
 | 3 | `cd cod-astro/theme01 && npm run dev`       | Storefront on `http://localhost:4321` — run `astro dev --port 4322` when the dashboard is up |
 
 Inspect the shared DB any time:
-`wrangler d1 execute codflow-os-db --local --persist-to ../.wrangler-shared --command "…"`
+`cd cod-server && node scripts/d1.mjs execute --local --persist-to ../.wrangler-shared --command "…"`
+(DB name comes from `COD_DB_NAME` in the root `.env`)
 
 ---
 

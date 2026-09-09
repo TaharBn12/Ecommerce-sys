@@ -43,8 +43,8 @@ database, and bucket is a placeholder you replace with your own resources.
 
    ```bash
    wrangler login
-   wrangler d1 create codflow-os-db       # → copy the returned database_id into wrangler.toml
-   wrangler r2 bucket create codflow-images # → match bucket_name in wrangler.toml
+   wrangler d1 create <your-db-name>   # → copy the returned database_id into wrangler.toml, set COD_DB_NAME in the root .env
+   wrangler r2 bucket create <your-bucket> # → match bucket_name in wrangler.toml, set COD_R2_BUCKET_NAME in the root .env
    wrangler kv namespace create RATE_LIMIT  # → kv id
    wrangler kv namespace create OAUTH_KV    # → kv id (MCP OAuth provider)
    ```

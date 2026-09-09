@@ -140,13 +140,14 @@ BETTER_AUTH_SECRET=<your-generated-secret>
 
 ### wrangler.jsonc
 
+No `COD_SERVER_URL` here — `npm run deploy` (scripts/deploy.mjs) injects it
+at deploy time from the repo-root `.env`. Deploy refuses a localhost value
+unless `--force-local` is passed. Only set the worker `name` in this file.
+
 ```jsonc
 {
   "name": "mystore-store",
-  "compatibility_date": "2025-01-21",
-  "vars": {
-    "COD_SERVER_URL": "https://api.yourdomain.com"
-  }
+  "compatibility_date": "2025-01-21"
 }
 ```
 
