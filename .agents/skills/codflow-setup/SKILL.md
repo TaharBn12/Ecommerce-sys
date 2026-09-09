@@ -135,20 +135,23 @@ grep -rn "00000000-0000\|00000000000000000000000000000000" \
 # expected: no matches — fix any hit before continuing
 ```
 
-**Propagate renamed D1 database through scripts:** If the database name differs
-from `codflow-os-db`, it is hardcoded in multiple locations that must be updated:
-- `cod-server/package.json`: `db:migrate:local` and `db:migrate:remote` scripts
-- `cod-server/scripts/seed-local.mjs`: both `--local` and `--remote` wrangler
-  d1 execute calls
-- `cod-client-astro/scripts/seed-admin.mjs`: both `--local` and `--remote`
-  wrangler d1 execute calls
+**Set the D1 database name once:** the scripts are not hardcoded — the seeders,
+the migration wrapper (`cod-server/scripts/d1.mjs`) and the R2 setup all read
+`COD_DB_NAME` from `<repo-root>/.env` via `cod-server/scripts/cloud-env.mjs`
+(precedence: `process.env` > `.env` > default). Set it there:
 
-After updating, grep the repo to confirm only README/doc mentions of the old
-name remain:
+```bash
+cp .env.example .env      # at the repo root
+# COD_DB_NAME=<your database name>
+```
+
+The `database_name` / `database_id` in each `wrangler.toml` still has to match
+the database you created — those are wrangler's own config, not script input.
+Confirm no script or config still pins the sample name:
 
 ```bash
 grep -r "codflow-os-db" --exclude-dir=node_modules --exclude-dir=.git
-# expected: only documentation files, zero script/config hits
+# expected: only .env.example defaults and documentation, zero script hits
 ```
 
 Confirm the filled `wrangler.toml` files are not tracked by git:
