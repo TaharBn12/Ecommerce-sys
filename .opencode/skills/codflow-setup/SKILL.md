@@ -143,6 +143,8 @@ the migration wrapper (`cod-server/scripts/d1.mjs`) and the R2 setup all read
 ```bash
 cp .env.example .env      # at the repo root
 # COD_DB_NAME=<your database name>
+# COD_SERVER_URL=https://<your api domain>  # required BEFORE theme01 deploy —
+#   npm run deploy refuses a localhost value (the default) without --force-local
 ```
 
 The `database_name` / `database_id` in each `wrangler.toml` still has to match
@@ -168,9 +170,9 @@ While editing, also replace the example domains in `[vars]` /
 `[env.production.vars]` (`WORKER_URL`, `BETTER_AUTH_URL`, `WORKER_SELF_URL`,
 `PUBLIC_APP_URL`, `PUBLIC_API_URL`, `PUBLIC_TRUSTED_ORIGINS`) with the
 developer's real URLs when they are known; localhost defaults are correct for
-local runs. In `cod-astro/theme01/wrangler.jsonc`, set `COD_SERVER_URL` to the
-cod-server public URL before deploying the storefront (localhost default is
-correct for local dev only).
+local runs. The storefront's `COD_SERVER_URL` is NOT set in
+`cod-astro/theme01/wrangler.jsonc` — it is injected at deploy time by
+`npm run deploy` from `COD_SERVER_URL` in the root `.env`.
 
 Also create the dashboard's build-time client env:
 
@@ -376,10 +378,11 @@ cd ../cod-astro/theme01 && env -u CLOUDFLARE_ACCOUNT_ID npm run deploy     # ast
 redeploy:** Once workers are live, set `PUBLIC_APP_URL` /
 `PUBLIC_API_URL` / `PUBLIC_TRUSTED_ORIGINS` (cod-client-astro wrangler.toml
 `[vars]`), `WORKER_URL`, `WORKER_SELF_URL`, `BETTER_AUTH_URL` (cod-server
-wrangler.toml `[vars]`), and `COD_SERVER_URL` (theme01 wrangler.jsonc) to the
-actual deployed URLs, then redeploy affected workers. For the dashboard also
-update `.env` (`PUBLIC_API_URL`) and **rebuild** — it is baked into the client
-bundle at build time. Skipping this causes browser sign-in failures (R6/R7).
+wrangler.toml `[vars]`), and `COD_SERVER_URL` (root `.env` — the theme01
+deploy script reads it) to the actual deployed URLs, then redeploy affected
+workers. For the dashboard also update `.env` (`PUBLIC_API_URL`) and
+**rebuild** — it is baked into the client bundle at build time. Skipping this
+causes browser sign-in failures (R6/R7).
 
 Smoke-test after each deploy; do not continue past a failing check:
 

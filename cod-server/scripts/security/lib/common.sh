@@ -10,10 +10,15 @@
 #   admin                   → any non-40x
 
 BASE_URL="${BASE_URL:-http://localhost:8787}"
-DB_NAME="codflow-os-db"
-PARALLEL="${PARALLEL:-12}"
+# D1 database name from the unified root .env (COD_DB_NAME) — override with
+# DB_NAME=<name> if needed. See cod-server/scripts/cloud-env.mjs.
 SEC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_DIR="$SEC_DIR/../.."
+if [[ -z "${DB_NAME:-}" ]]; then
+  DB_NAME="$(node -e "import('$SERVER_DIR/scripts/cloud-env.mjs').then(m => process.stdout.write(m.getCloudEnv().dbName))")" \
+    || DB_NAME="codflow-os-db"
+fi
+PARALLEL="${PARALLEL:-12}"
 KEYS_CACHE="/tmp/codflow-sectest-keys.${DB_NAME}.txt"
 EP_FILE=""
 OUT_FILE=""

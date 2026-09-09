@@ -143,6 +143,8 @@ the migration wrapper (`cod-server/scripts/d1.mjs`) and the R2 setup all read
 ```bash
 cp .env.example .env      # at the repo root
 # COD_DB_NAME=<your database name>
+# COD_SERVER_URL=https://<your api domain>  # required BEFORE theme01 deploy —
+#   npm run deploy refuses a localhost value (the default) without --force-local
 ```
 
 The `database_name` / `database_id` in each `wrangler.toml` still has to match
@@ -168,9 +170,9 @@ While editing, also replace the example domains in `[vars]` /
 `[env.production.vars]` (`WORKER_URL`, `BETTER_AUTH_URL`, `WORKER_SELF_URL`,
 `PUBLIC_APP_URL`, `PUBLIC_API_URL`, `PUBLIC_TRUSTED_ORIGINS`) with the
 developer's real URLs when they are known; localhost defaults are correct for
-local runs. In `cod-astro/theme01/wrangler.jsonc`, set `COD_SERVER_URL` to the
-cod-server public URL before deploying the storefront (localhost default is
-correct for local dev only).
+local runs. The storefront's `COD_SERVER_URL` is NOT set in
+`cod-astro/theme01/wrangler.jsonc` — it is injected at deploy time by
+`npm run deploy` from `COD_SERVER_URL` in the root `.env`.
 
 Also create the dashboard's build-time client env:
 
@@ -376,10 +378,11 @@ cd ../cod-astro/theme01 && env -u CLOUDFLARE_ACCOUNT_ID npm run deploy     # ast
 redeploy:** Once workers are live, set `PUBLIC_APP_URL` /
 `PUBLIC_API_URL` / `PUBLIC_TRUSTED_ORIGINS` (cod-client-astro wrangler.toml
 `[vars]`), `WORKER_URL`, `WORKER_SELF_URL`, `BETTER_AUTH_URL` (cod-server
-wrangler.toml `[vars]`), and `COD_SERVER_URL` (theme01 wrangler.jsonc) to the
-actual deployed URLs, then redeploy affected workers. For the dashboard also
-update `.env` (`PUBLIC_API_URL`) and **rebuild** — it is baked into the client
-bundle at build time. Skipping this causes browser sign-in failures (R6/R7).
+wrangler.toml `[vars]`), and `COD_SERVER_URL` (root `.env` — the theme01
+deploy script reads it) to the actual deployed URLs, then redeploy affected
+workers. For the dashboard also update `.env` (`PUBLIC_API_URL`) and
+**rebuild** — it is baked into the client bundle at build time. Skipping this
+causes browser sign-in failures (R6/R7).
 
 Smoke-test after each deploy; do not continue past a failing check:
 
@@ -410,6 +413,29 @@ workers.dev cannot load products from a cod-server also on workers.dev. For a
 production storefront, put cod-server on a custom domain/route and point
 `COD_SERVER_URL` at it (or wire a Service Binding), then re-deploy theme01 and
 confirm `/products` shows the seeded catalog. Local development is unaffected.
+
+## Step 6b — Optional: Transactional Email (Sendili)
+
+Offer this to the developer after the smoke tests pass; skip entirely if they
+decline — the feature is inert by default (no `store_email_config` row).
+
+1. Ask the developer to: create a [sendili.com](https://sendili.com) account,
+   buy credits, **verify their sending domain** (DNS records in the Sendili
+   dashboard), and create an API key (`sk_live_…`).
+2. In the deployed dashboard: sign in as admin → **Settings → Email Sending** →
+   paste the key (domains auto-load) → set the from address by typing the
+   local part (`support`, `notify`…) and picking the verified domain →
+   toggle **Enable email sending** → **Save**.
+3. Verify: **Test connection** shows `Connection OK` with the domain listed;
+   then invite a team member with an email the developer can check and
+   confirm the invite email arrives (sign-in link + temporary password), and
+   that the invited member can sign in.
+4. Docs: `docs/EMAIL-SENDING.md` (feature guide) and
+   `docs/adr/0001-sendili-key-at-rest.md` (key storage decision).
+
+No wrangler secrets, no worker config — the key lives in D1
+(`store_email_config`, applied by migration `0013` in Step 5) and is masked
+in every API response.
 
 ## Step 7 — Closing Summary (Mandatory)
 

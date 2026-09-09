@@ -286,7 +286,7 @@ the dzverify key enters only via the dashboard → D1.
 
 ## Production rollout checklist (human steps)
 
-1. `cd cod-server && npx wrangler d1 migrations apply codflow-os-db --remote`
+1. `cd cod-server && npm run db:migrate:remote`
 2. Deploy cod-server (`npx wrangler deploy --env production`)
 3. Build + deploy theme01 (`npm run build` + `wrangler deploy`) and
    cod-client-astro (`npm run build` + `npx wrangler deploy`)

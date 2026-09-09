@@ -136,7 +136,7 @@ cd ../cod-astro/theme01 && npm run build && npm run deploy
    - `PUBLIC_APP_URL` + `PUBLIC_TRUSTED_ORIGINS` (cod-client-astro wrangler.toml) → your dashboard URL
    - `.env` `PUBLIC_API_URL` (cod-client-astro) → your API URL — then **rebuild** (it is baked into the client bundle)
    - `WORKER_URL`, `BETTER_AUTH_URL`, `WORKER_SELF_URL` (cod-server wrangler.toml) → your API + dashboard URLs
-   - `COD_SERVER_URL` (cod-astro/theme01/wrangler.jsonc) → your API URL
+   - `COD_SERVER_URL` (repo-root `.env`) → your API URL — the theme01 deploy script injects it at deploy time (never in wrangler.jsonc)
 3. Redeploy affected workers
 
 ---
