@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { shouldTriggerCapiPurchase, resolveCapiDispatch, type CapiDispatchConfig } from "./capi-helpers";
+import {
+  shouldTriggerCapiPurchase,
+  shouldTriggerCapiConfirmed,
+  resolveCapiDispatch,
+  type CapiDispatchConfig,
+} from "./capi-helpers";
 
 function config(overrides: Partial<CapiDispatchConfig> = {}): CapiDispatchConfig {
   return {
@@ -11,6 +16,19 @@ function config(overrides: Partial<CapiDispatchConfig> = {}): CapiDispatchConfig
     ...overrides,
   };
 }
+
+describe("shouldTriggerCapiConfirmed", () => {
+  it("triggers on confirmed", () => {
+    expect(shouldTriggerCapiConfirmed("confirmed")).toBe(true);
+  });
+
+  it("does not trigger on other statuses", () => {
+    expect(shouldTriggerCapiConfirmed("pending")).toBe(false);
+    expect(shouldTriggerCapiConfirmed("delivered")).toBe(false);
+    expect(shouldTriggerCapiConfirmed("out_for_delivery")).toBe(false);
+    expect(shouldTriggerCapiConfirmed("cancelled")).toBe(false);
+  });
+});
 
 describe("shouldTriggerCapiPurchase", () => {
   it("triggers on delivered", () => {
@@ -27,6 +45,7 @@ describe("shouldTriggerCapiPurchase", () => {
   it("never triggers on other statuses", () => {
     expect(shouldTriggerCapiPurchase("dispatched", 1)).toBe(false);
     expect(shouldTriggerCapiPurchase("returned", 16)).toBe(false);
+    expect(shouldTriggerCapiPurchase("confirmed", 1)).toBe(false);
   });
 });
 
@@ -75,6 +94,44 @@ describe("resolveCapiDispatch", () => {
     expect(resolveCapiDispatch(config({ testMode: true, testEventCode: null }), "Purchase")).toEqual({
       send: true,
       testEventCode: null,
+    });
+  });
+
+  describe("stage-aware dispatch", () => {
+    it("handles Purchase_Confirmed mode at confirmed stage", () => {
+      const cfg = config({ conversionEvent: "Purchase_Confirmed" });
+      expect(resolveCapiDispatch(cfg, "Purchase", "confirmed")).toEqual({
+        send: true,
+        testEventCode: null,
+      });
+      expect(resolveCapiDispatch(cfg, "Purchase", "checkout")).toMatchObject({
+        send: false,
+        reason: "conversion-event-mismatch",
+      });
+    });
+
+    it("handles Purchase_Delivered mode at delivered stage", () => {
+      const cfg = config({ conversionEvent: "Purchase_Delivered" });
+      expect(resolveCapiDispatch(cfg, "Purchase", "delivered")).toEqual({
+        send: true,
+        testEventCode: null,
+      });
+      expect(resolveCapiDispatch(cfg, "Purchase", "checkout")).toMatchObject({
+        send: false,
+        reason: "conversion-event-mismatch",
+      });
+    });
+
+    it("handles Lead mode at checkout stage", () => {
+      const cfg = config({ conversionEvent: "Lead" });
+      expect(resolveCapiDispatch(cfg, "Lead", "checkout")).toEqual({
+        send: true,
+        testEventCode: null,
+      });
+      expect(resolveCapiDispatch(cfg, "Purchase", "checkout")).toMatchObject({
+        send: false,
+        reason: "conversion-event-mismatch",
+      });
     });
   });
 });

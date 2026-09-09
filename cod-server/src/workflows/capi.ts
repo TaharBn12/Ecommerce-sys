@@ -1,44 +1,51 @@
 /**
- * CodCapiWorkflow — durable Cloudflare Workflow that sends a Meta CAPI Purchase event
- * when an order reaches a delivery-trigger status.
+ * CodCapiWorkflow — durable Cloudflare Workflow that sends Meta CAPI events
+ * across the COD lifecycle (Checkout, Phone Confirmation, Delivery).
  *
- * Decoupled from the status handler: CAPI failure can never block delivery confirmation.
- * Instance ID: `capi-{orderId}-Purchase` — deterministic, prevents duplicate Workflows.
+ * Decoupled from the status handler: CAPI failure can never block order or delivery confirmation.
+ * Instance ID: `capi-{orderId}-{stage}-{eventName}` — deterministic, prevents duplicate Workflows.
  *
  * Steps:
- *   1. fetch-order-and-config  — load fresh order + pixel config + product ids from D1
- *   2. log-skip                — audit row when the send could never happen
- *                                (no access token, or event_time outside Meta's 7-day window)
- *   3. send-capi-event         — POST to Meta; network/5xx throw so the Workflow
- *                                retries (5 attempts, exponential backoff). 4xx returns
- *                                success:false — Meta rejected the batch, retrying won't help.
- *   4. log-result / log-failure — audit row in capi_event_log for every outcome
- *
- * Skips silently when tracking is disabled or the merchant chose Lead as the
- * conversion event — normal operation, not an anomaly worth an audit row.
+ *   0. validate-payload        — Zod schema validation (NonRetryableError on malformed inputs)
+ *   1. fetch-order-and-config  — load fresh order + pixel config + verify stage eligibility
+ *   2. log-skip                — audit row when the send could never happen (no token / expired)
+ *   3. claim-event             — atomic D1 insert with unique key constraint on (order_id, stage, event_name)
+ *   4. send-capi-event         — POST to Meta; network/5xx throw to trigger exponential retry
+ *   5. log-result / log-failure — updates the claimed row with final outcome
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
+import { z } from "zod";
 import type { Env } from "@/types/env";
 import { getDb } from "@/db";
-import { orders, communes, orderProducts, stores } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { orders, communes, orderProducts, stores, capiEventLog } from "@/db/schema";
+import { eq, and, sql } from "drizzle-orm";
 import { getPixelConfig } from "../../../cod-shared/queries/pixel-config";
 import { sendCapiEvent, type CapiResult } from "@/lib/capi";
-import { resolveCapiDispatch } from "./capi-helpers";
+import {
+  resolveCapiDispatch,
+  resolveConversionForStage,
+  getCapiWorkflowId,
+  shouldTriggerCapiPurchase,
+  shouldTriggerCapiConfirmed,
+  type ConversionStage,
+  type MetaEventName,
+} from "./capi-helpers";
 import { logCapiEvent } from "@/lib/capi-log";
 
 const SEVEN_DAYS_SECONDS = 7 * 24 * 3600;
 
-export type CodCapiParams = {
-  orderId: string;
-  eventName: "Lead" | "Purchase";
-  triggeredAt: number; // Unix timestamp — becomes event_time
-  triggerStatus: string;
-  /** Verified-domain page URL — required by Meta for website events. */
-  eventSourceUrl?: string;
-};
+export const CodCapiParamsSchema = z.object({
+  orderId: z.string().min(1, "orderId is required"),
+  eventName: z.enum(["Lead", "Purchase"]),
+  stage: z.enum(["checkout", "confirmed", "delivered"]).default("delivered"),
+  triggeredAt: z.number().int().positive("triggeredAt must be a positive integer"),
+  triggerStatus: z.string().min(1, "triggerStatus is required"),
+  eventSourceUrl: z.string().url().optional(),
+});
+
+export type CodCapiParams = z.infer<typeof CodCapiParamsSchema>;
 
 function splitName(customerName: string): { firstName?: string; lastName?: string } {
   const parts = customerName.trim().split(/\s+/);
@@ -50,7 +57,14 @@ function splitName(customerName: string): { firstName?: string; lastName?: strin
 
 export class CodCapiWorkflow extends WorkflowEntrypoint<Env, CodCapiParams> {
   async run(event: WorkflowEvent<CodCapiParams>, step: WorkflowStep) {
-    const { orderId, eventName, triggeredAt, eventSourceUrl } = event.payload;
+    // Step 0 — Runtime schema validation
+    const parsed = CodCapiParamsSchema.safeParse(event.payload);
+    if (!parsed.success) {
+      const errorMsg = parsed.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ");
+      throw new NonRetryableError(`Invalid CAPI workflow payload: ${errorMsg}`);
+    }
+
+    const { orderId, eventName, stage, triggeredAt, eventSourceUrl, triggerStatus } = parsed.data;
 
     // Step 1 — fetch fresh data from D1 (never rely on stale params)
     const data = await step.do("fetch-order-and-config", async () => {
@@ -81,11 +95,15 @@ export class CodCapiWorkflow extends WorkflowEntrypoint<Env, CodCapiParams> {
 
       // Resolve commune name and postal code for user_data
       const communeRow = order.communeId
-        ? await db.select({ name: communes.name, postalCode: communes.postalCode }).from(communes).where(eq(communes.id, order.communeId)).get()
+        ? await db
+            .select({ name: communes.name, postalCode: communes.postalCode })
+            .from(communes)
+            .where(eq(communes.id, order.communeId))
+            .get()
         : null;
 
       // Single-tenant: one store per database
-      const storeRow = await db.select({ id: stores.id }).from(stores).limit(1).get();
+      const storeRow = await db.select({ id: stores.id, domain: stores.domain }).from(stores).limit(1).get();
       if (!storeRow) throw new NonRetryableError("No store found");
 
       const productRows = await db
@@ -95,29 +113,40 @@ export class CodCapiWorkflow extends WorkflowEntrypoint<Env, CodCapiParams> {
 
       const pixelConfig = await getPixelConfig(db, storeRow.id);
 
+      // Shared conversion model resolver check
+      const decision = resolveConversionForStage(pixelConfig?.conversionEvent, stage);
+
       return {
         order,
+        storeDomain: storeRow.domain,
         cityName: communeRow?.name ?? null,
         postalCode: communeRow?.postalCode ?? null,
         contentIds: [...new Set(productRows.map((r) => r.productId))],
         pixelConfig,
+        shouldFire: decision.shouldFire && decision.eventName === eventName,
+        skipReason: decision.reason,
       };
     });
 
+    if (!data.shouldFire) {
+      return { skipped: true, reason: data.skipReason ?? "stage_mismatch" };
+    }
+
     // Step 2 — gate: merchant must have chosen this event, with a token, tracking on
-    const dispatch = resolveCapiDispatch(data.pixelConfig, eventName);
+    const dispatch = resolveCapiDispatch(data.pixelConfig, eventName, stage);
     if (!dispatch.send) {
       if (dispatch.reason === "no-access-token") {
         await step.do("log-skip", async () => {
           await logCapiEvent(getDb(this.env.DB), {
             orderId,
             eventName,
+            stage,
             status: "skipped",
             error: dispatch.message,
           });
         });
       }
-      return;
+      return { skipped: true, reason: dispatch.reason };
     }
 
     // Step 3 — guard: 7-day Meta hard limit on event_time
@@ -127,17 +156,73 @@ export class CodCapiWorkflow extends WorkflowEntrypoint<Env, CodCapiParams> {
         await logCapiEvent(getDb(this.env.DB), {
           orderId,
           eventName,
+          stage,
           status: "skipped",
           error: `event_time expired: order ${orderId} is ${Math.round(ageSeconds / 3600)}h old — outside Meta 7-day window`,
         });
       });
-      return;
+      return { skipped: true, reason: "event_time_expired" };
     }
 
-    // Step 4 — send CAPI event. Network errors and Meta 5xx throw, which
-    // engages the Workflow's retry (5 attempts, 30s exponential backoff).
+    // Step 4 — Atomic Event Claim in D1
+    const claim = await step.do("claim-event", async () => {
+      const db = getDb(this.env.DB);
+      const now = new Date().toISOString();
+      const claimId = `claim-${orderId}-${stage}-${eventName}`;
+
+      try {
+        const res = await db.run(
+          sql`INSERT INTO capi_event_log (id, order_id, event_name, stage, status, sent_at)
+              VALUES (${claimId}, ${orderId}, ${eventName}, ${stage}, 'claimed', ${now})
+              ON CONFLICT (order_id, stage, event_name) DO NOTHING`
+        );
+
+        if (res.meta.changes === 1) {
+          return { claimed: true };
+        }
+      } catch {
+        // Fallback check if driver does not support changes property or syntax
+      }
+
+      // Check existing row
+      const existing = await db
+        .select({ status: capiEventLog.status, sentAt: capiEventLog.sentAt })
+        .from(capiEventLog)
+        .where(
+          and(
+            eq(capiEventLog.orderId, orderId),
+            eq(capiEventLog.stage, stage),
+            eq(capiEventLog.eventName, eventName)
+          )
+        )
+        .get();
+
+      if (existing) {
+        if (existing.status === "sent") {
+          return { claimed: false, reason: "already_sent" };
+        }
+        if (existing.status === "claimed") {
+          const elapsed = Date.now() - new Date(existing.sentAt).getTime();
+          if (elapsed < 10 * 60 * 1000) {
+            return { claimed: false, reason: "already_in_flight" };
+          }
+        }
+      }
+
+      return { claimed: true };
+    });
+
+    if (!claim.claimed) {
+      return { skipped: true, reason: claim.reason };
+    }
+
+    // Step 5 — Send CAPI Event to Meta
+    const finalEventSourceUrl =
+      eventSourceUrl ?? (data.storeDomain ? `https://${data.storeDomain}/thank-you` : undefined);
+
     const { firstName, lastName } = splitName(data.order.customerName);
     let capiResult: CapiResult;
+
     try {
       capiResult = await step.do(
         "send-capi-event",
@@ -147,7 +232,7 @@ export class CodCapiWorkflow extends WorkflowEntrypoint<Env, CodCapiParams> {
             eventName,
             eventId: orderId,
             eventTime: triggeredAt,
-            eventSourceUrl,
+            eventSourceUrl: finalEventSourceUrl,
             userData: {
               phone: data.order.phone,
               firstName,
@@ -169,27 +254,35 @@ export class CodCapiWorkflow extends WorkflowEntrypoint<Env, CodCapiParams> {
       );
     } catch (err) {
       await step.do("log-failure", async () => {
-        await logCapiEvent(getDb(this.env.DB), {
-          orderId,
-          eventName,
-          status: "failed",
-          error: err instanceof Error ? err.message : String(err),
-        });
+        const db = getDb(this.env.DB);
+        const now = new Date().toISOString();
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        await db.run(
+          sql`UPDATE capi_event_log
+              SET status = 'failed', error = ${errorMsg}, sent_at = ${now}
+              WHERE order_id = ${orderId} AND stage = ${stage} AND event_name = ${eventName}`
+        );
       });
       throw err;
     }
 
-    // Step 5 — write audit row to capi_event_log
+    // Step 6 — Update claim row in capi_event_log
     await step.do("log-result", async () => {
-      await logCapiEvent(getDb(this.env.DB), {
-        orderId,
-        eventName,
-        status: capiResult.success ? "sent" : "failed",
-        metaEventId: capiResult.fbtrace_id ?? null,
-        error: capiResult.error ?? null,
-      });
+      const db = getDb(this.env.DB);
+      const now = new Date().toISOString();
+      const status = capiResult.success ? "sent" : "failed";
+      const metaEventId = capiResult.fbtrace_id ?? null;
+      const error = capiResult.error ?? null;
+
+      await db.run(
+        sql`UPDATE capi_event_log
+            SET status = ${status}, meta_event_id = ${metaEventId}, error = ${error}, sent_at = ${now}
+            WHERE order_id = ${orderId} AND stage = ${stage} AND event_name = ${eventName}`
+      );
     });
+
+    return { success: capiResult.success, metaEventId: capiResult.fbtrace_id };
   }
 }
 
-export { shouldTriggerCapiPurchase } from "./capi-helpers";
+export { shouldTriggerCapiPurchase, shouldTriggerCapiConfirmed, getCapiWorkflowId } from "./capi-helpers";

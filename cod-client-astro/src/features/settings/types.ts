@@ -57,7 +57,7 @@ export interface PixelConfig {
   adAccountName: string | null;
   accessTokenMasked: string;
   testEventCode: string | null;
-  conversionEvent: "Lead" | "Purchase";
+  conversionEvent: "Purchase" | "Purchase_Confirmed" | "Purchase_Delivered" | "Lead";
   testMode: boolean;
   enabled: boolean;
   createdAt: string;
@@ -69,7 +69,7 @@ export interface SavePixelConfigData {
   adAccountName?: string | null;
   accessToken?: string;
   testEventCode?: string | null;
-  conversionEvent: "Lead" | "Purchase";
+  conversionEvent: "Purchase" | "Purchase_Confirmed" | "Purchase_Delivered" | "Lead";
   testMode?: boolean;
   enabled?: boolean;
 }

@@ -1,11 +1,12 @@
 import { capiEventLog } from "@/db/schema";
 import type { getDb } from "@/db";
 
-export type CapiLogStatus = "sent" | "failed" | "skipped";
+export type CapiLogStatus = "sent" | "failed" | "skipped" | "claimed";
 
 export interface CapiLogEntry {
   orderId: string;
   eventName: "Lead" | "Purchase";
+  stage?: "checkout" | "confirmed" | "delivered";
   status: CapiLogStatus;
   metaEventId?: string | null;
   error?: string | null;
@@ -21,6 +22,7 @@ export async function logCapiEvent(db: ReturnType<typeof getDb>, entry: CapiLogE
       id: crypto.randomUUID(),
       orderId: entry.orderId,
       eventName: entry.eventName,
+      stage: entry.stage ?? "delivered",
       status: entry.status,
       metaEventId: entry.metaEventId ?? null,
       error: entry.error ?? null,

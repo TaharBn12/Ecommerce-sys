@@ -36,6 +36,7 @@ export const DEFAULT_CONFIG: StoreConfig = {
   otpEnabled: false,
   status: "active",
   pixelId: null,
+  conversionEvent: null,
 };
 
 export interface StoreContext {

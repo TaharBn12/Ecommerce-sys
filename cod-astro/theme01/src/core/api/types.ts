@@ -36,6 +36,7 @@ export interface StoreConfig {
   otpEnabled: boolean;
   status: "active" | "inactive";
   pixelId?: string | null;
+  conversionEvent?: "Purchase" | "Purchase_Confirmed" | "Purchase_Delivered" | "Lead" | null;
 }
 
 export interface ShippingRates {

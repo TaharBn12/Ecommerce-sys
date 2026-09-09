@@ -1,3 +1,14 @@
+import {
+  ConversionStage,
+  MetaEventName,
+  ConversionMode,
+  ConversionDecision,
+  resolveConversionForStage,
+  getCapiWorkflowId,
+} from "./conversion-model";
+
+export * from "./conversion-model";
+
 // Southern wilayas with 5-10 day delivery — Workflow triggers at out_for_delivery
 // for these to stay within Meta's 7-day window.
 const LONG_HAUL_WILAYA_IDS = new Set([
@@ -13,6 +24,10 @@ const LONG_HAUL_WILAYA_IDS = new Set([
  * Determines whether to trigger CodCapiWorkflow for a given status transition.
  * Call this after updateOrderStatus() resolves.
  */
+export function shouldTriggerCapiConfirmed(newStatus: string): boolean {
+  return newStatus === "confirmed";
+}
+
 export function shouldTriggerCapiPurchase(
   newStatus: string,
   wilayaId: number | null | undefined,
@@ -25,7 +40,7 @@ export function shouldTriggerCapiPurchase(
 export interface CapiDispatchConfig {
   enabled: boolean;
   accessToken: string;
-  conversionEvent: "Lead" | "Purchase";
+  conversionEvent: ConversionMode;
   testMode: boolean;
   testEventCode: string | null;
 }
@@ -42,12 +57,12 @@ export type CapiDispatch =
 /**
  * Single gate for every CAPI send: the store's tracking must be enabled, carry
  * an access token, and the merchant must have chosen `eventName` as the
- * conversion event. Test Mode routes events to Meta's test stream — the
- * test_event_code is attached only when it is on.
+ * conversion event for the given business stage.
  */
 export function resolveCapiDispatch(
   config: CapiDispatchConfig | null | undefined,
-  eventName: "Lead" | "Purchase",
+  eventName: MetaEventName,
+  stage?: ConversionStage,
 ): CapiDispatch {
   if (!config?.enabled) {
     return { send: false, reason: "tracking-disabled", message: "Tracking disabled in store settings" };
@@ -59,12 +74,32 @@ export function resolveCapiDispatch(
       message: "No CAPI access token — configure it in Settings → Tracking",
     };
   }
-  if (config.conversionEvent !== eventName) {
-    return {
-      send: false,
-      reason: "conversion-event-mismatch",
-      message: `Conversion event is set to ${config.conversionEvent} — ${eventName} not sent`,
-    };
+
+  if (stage) {
+    const decision = resolveConversionForStage(config.conversionEvent, stage);
+    if (!decision.shouldFire || decision.eventName !== eventName) {
+      return {
+        send: false,
+        reason: "conversion-event-mismatch",
+        message: decision.reason ?? `Conversion event is set to ${config.conversionEvent} — ${eventName} not sent at stage ${stage}`,
+      };
+    }
+  } else {
+    const allowed =
+      (eventName === "Purchase" &&
+        (config.conversionEvent === "Purchase" ||
+          config.conversionEvent === "Purchase_Confirmed" ||
+          config.conversionEvent === "Purchase_Delivered")) ||
+      (eventName === "Lead" && config.conversionEvent === "Lead");
+
+    if (!allowed) {
+      return {
+        send: false,
+        reason: "conversion-event-mismatch",
+        message: `Conversion event is set to ${config.conversionEvent} — ${eventName} not sent`,
+      };
+    }
   }
+
   return { send: true, testEventCode: config.testMode ? config.testEventCode : null };
 }

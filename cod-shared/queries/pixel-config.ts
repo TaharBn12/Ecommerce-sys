@@ -2,13 +2,20 @@ import type { AppDb } from "../db/client";
 import { storePixelConfig } from "../db/schema";
 import { eq } from "drizzle-orm";
 
-export type ConversionEvent = "Lead" | "Purchase";
+export type ConversionEvent = "Purchase" | "Purchase_Confirmed" | "Purchase_Delivered" | "Lead";
 
-export async function getPixelConfig(db: AppDb, storeId: string) {
+export async function getPixelConfig(db: AppDb, storeId?: string) {
+  if (storeId) {
+    return db
+      .select()
+      .from(storePixelConfig)
+      .where(eq(storePixelConfig.storeId, storeId))
+      .get();
+  }
   return db
     .select()
     .from(storePixelConfig)
-    .where(eq(storePixelConfig.storeId, storeId))
+    .limit(1)
     .get();
 }
 
