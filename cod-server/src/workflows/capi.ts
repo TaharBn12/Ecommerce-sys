@@ -60,7 +60,7 @@ export class CodCapiWorkflow extends WorkflowEntrypoint<Env, CodCapiParams> {
     // Step 0 — Runtime schema validation
     const parsed = CodCapiParamsSchema.safeParse(event.payload);
     if (!parsed.success) {
-      const errorMsg = parsed.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ");
+      const errorMsg = parsed.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ");
       throw new NonRetryableError(`Invalid CAPI workflow payload: ${errorMsg}`);
     }
 
