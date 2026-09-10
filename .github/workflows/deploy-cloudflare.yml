@@ -14,6 +14,11 @@ name: Deploy CodFlow to Cloudflare
 
 on:
   workflow_dispatch:
+    inputs:
+      reset_db:
+        description: 'Delete + recreate D1 (fresh database, wipes data)'
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -68,6 +73,13 @@ jobs:
             echo "ADMIN_NAME=${ADMIN_NAME:-Admin}"
           } >> "$GITHUB_ENV"
 
+      - name: Reset D1 database (manual trigger only)
+        if: ${{ inputs.reset_db == true }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          npx wrangler d1 delete codflow-db --skip-confirmation || true
+
       - name: Generate Cloudflare config
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -103,19 +115,21 @@ jobs:
           STORE_API_KEY: ${{ env.STORE_API_KEY }}
         run: |
           set -o pipefail
+          rm -f /tmp/migrate-all.log
           ok=0
           for attempt in 1 2 3; do
             echo "::group::db:migrate:remote (attempt $attempt)"
-            if npm run db:migrate:remote 2>&1 | tee /tmp/migrate.log; then
+            { echo "===== ATTEMPT $attempt ====="; } >> /tmp/migrate-all.log
+            if npm run db:migrate:remote 2>&1 | tee -a /tmp/migrate-all.log; then
               echo "::endgroup::"
               ok=1
               break
             fi
             echo "::endgroup::"
-            echo "Migrations attempt $attempt failed — retrying in 15s (fresh D1 replication lag)..."
-            sleep 15
+            echo "Migrations attempt $attempt failed."
+            sleep 5
           done
-          [ "$ok" = "1" ] || { tail -c 4000 /tmp/migrate.log > /tmp/step-error.log; exit 1; }
+          [ "$ok" = "1" ] || { cp /tmp/migrate-all.log /tmp/migrate.log; exit 1; }
           npm run db:seed:remote 2>&1 | tee /tmp/seed.log || { tail -c 4000 /tmp/seed.log > /tmp/step-error.log; exit 1; }
 
       - name: Seed merchant admin account
@@ -129,11 +143,27 @@ jobs:
 
       - name: Report failure
         if: failure()
+        working-directory: cod-server
         env:
           GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CF_ACCOUNT_ID }}
         run: |
+          DIAG=$(npx wrangler d1 execute codflow-db --remote --command \
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name" --json 2>&1 | tail -c 1000 || true)
+          DIAG2=$(npx wrangler d1 execute codflow-db --remote --command \
+            "SELECT * FROM d1_migrations" --json 2>&1 | tail -c 800 || true)
           {
             echo "### ❌ Deploy failed — run $GITHUB_RUN_ID"
+            echo ""
+            echo "**sqlite_master tables**"
+            echo '```'
+            echo "$DIAG"
+            echo '```'
+            echo "**d1_migrations**"
+            echo '```'
+            echo "$DIAG2"
+            echo '```'
             for f in /tmp/migrate.log /tmp/seed.log /tmp/seed-admin.log; do
               if [ -f "$f" ]; then
                 echo ""
@@ -144,11 +174,17 @@ jobs:
               fi
             done
           } > /tmp/failure-body.md
-          gh api "repos/${{ github.repository }}/issues/1/comments" -F body=@/tmp/failure-body.md \
+          COMMENT_RESULT=$(gh api "repos/${{ github.repository }}/issues/1/comments" -F body=@/tmp/failure-body.md 2>&1 | tail -c 200) \
             && echo "failure comment posted to issue 1" \
-            || echo "::error::failed to post failure comment to issue 1"
-          # Emit the tail as error annotations (survive log-download blocks).
-          tail -c 1800 /tmp/failure-body.md | tr '\r\n' '  ' | fold -w 210 | head -8 | while IFS= read -r chunk; do
+            || echo "::error::comment post failed: $COMMENT_RESULT"
+          # Annotation channel (readable even when run-log download fails).
+          {
+            echo "TABLES: $DIAG"
+            echo "MIGR: $DIAG2"
+            echo "ERRORS:"
+            grep -aE "✘|ERROR|Error:|already exists|failed" /tmp/migrate.log 2>/dev/null | head -8
+          } > /tmp/fail-ann.txt
+          tail -c 1800 /tmp/fail-ann.txt | tr '\r\n' '  ' | fold -w 210 | head -8 | while IFS= read -r chunk; do
             chunk=${chunk//%/%25}
             echo "::error::[tail] $chunk"
           done
