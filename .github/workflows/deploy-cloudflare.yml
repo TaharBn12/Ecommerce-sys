@@ -315,13 +315,14 @@ jobs:
           STORE_API_KEY: ${{ env.STORE_API_KEY }}
         run: |
           sleep 20
+          : > /tmp/smoke.txt
           check() {
             local label="$1" url="$2"; shift 2
             local code
             code=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$@")
-            echo "- $label → HTTP $code (${url})"
+            echo "- $label → HTTP $code" | tee -a /tmp/smoke.txt
           }
-          echo "### Smoke results" | tee /tmp/smoke.txt
+          echo "### Smoke results" >> /tmp/smoke.txt
           check "API /health"        "$API_ORIGIN/health"        "$API_ORIGIN/health"
           check "Store /store/config" "$API_ORIGIN/store/config" -H "X-Store-API-Key: $STORE_API_KEY" "$API_ORIGIN/store/config"
           check "Dashboard"          "$DASHBOARD_ORIGIN"          "$DASHBOARD_ORIGIN/"
@@ -337,11 +338,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ env.CF_ACCOUNT_ID }}
         run: |
-          COUNTS=$(npx wrangler d1 execute codflow-db --remote --command "SELECT (SELECT COUNT(*) FROM products) AS products, (SELECT COUNT(*) FROM products WHERE status='ACTIVE' AND show_in_store=1 AND visibility=1 AND deleted_at IS NULL) AS visible_products, (SELECT COUNT(*) FROM stores) AS stores, (SELECT COUNT(*) FROM store_api_keys) AS store_keys, (SELECT COUNT(*) FROM users) AS users" --json 2>&1 | jq -c '.[0].results[0]' 2>/dev/null | tail -c 400 || true)
+          COUNTS=$(npx wrangler d1 execute codflow-db --remote --command "SELECT (SELECT COUNT(*) FROM products) AS products, (SELECT COUNT(*) FROM products WHERE status='ACTIVE' AND show_in_store=1 AND visibility=1 AND deleted_at IS NULL) AS visible_products, (SELECT COUNT(*) FROM stores) AS stores, (SELECT COUNT(*) FROM store_api_keys) AS store_keys, (SELECT COUNT(*) FROM users) AS users" --json 2>&1 | tr -d '\n' | grep -oE '"results":\[.*\]' | tail -c 400)
+          COUNTS=${COUNTS:-"(query failed: $(npx wrangler d1 execute codflow-db --remote --command 'SELECT COUNT(*) AS products FROM products' --json 2>&1 | tail -c 220))"}
           {
             echo "COUNTS: $COUNTS"
             echo "URLS: MODE=$DEPLOY_MODE API=$API_ORIGIN DASH=$DASHBOARD_ORIGIN STORE=$STORE_ORIGIN"
-            echo "ADMIN: $(tr '\n' ' ' < /tmp/admin-creds.txt 2>/dev/null)"
+            echo "ADMIN: email=$ADMIN_EMAIL password_length=${#ADMIN_PASSWORD} (stable derived secret)"
             echo "SMOKE: $(tr '\n' '|' < /tmp/smoke.txt 2>/dev/null)"
           } > /tmp/deploy-info.txt
           while IFS= read -r line; do
