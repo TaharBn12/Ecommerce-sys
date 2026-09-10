@@ -349,7 +349,14 @@ function addVar(text, varName, value) {
 function setTopLevelValue(text, key, value) {
   const re = new RegExp(`^${key}\\s*=.*$`, "m");
   if (re.test(text)) return text.replace(re, `${key} = ${JSON.stringify(value)}`);
-  return `${text.trimEnd()}\n\n${key} = ${JSON.stringify(value)}\n`;
+  // Insert right after the first non-comment line (the `name = ...` line) so
+  // the key stays at the top level — appending at EOF would silently land
+  // inside the last TOML section (e.g. [observability]).
+  const firstLineEnd = text.search(/^([^#\s[][^=]*=)/m);
+  const insertAt = firstLineEnd === -1 ? 0 : text.indexOf("\n", firstLineEnd) + 1;
+  return (
+    text.slice(0, insertAt) + `${key} = ${JSON.stringify(value)}\n` + text.slice(insertAt)
+  );
 }
 
 function setBindingValue(text, binding, field, value) {
@@ -474,6 +481,7 @@ async function main() {
   let serverCfg = serverTemplate;
   serverCfg = setTopLevelValue(serverCfg, "name", serverName);
   serverCfg = setTopLevelValue(serverCfg, "account_id", accountId);
+  serverCfg = setBindingValue(serverCfg, "DB", "database_name", dbName);
   serverCfg = setBindingValue(serverCfg, "DB", "database_id", d1Id);
   serverCfg = setBindingValue(serverCfg, "IMAGES", "bucket_name", bucketName);
   serverCfg = setBindingValue(serverCfg, "RATE_LIMIT", "id", rateKvId);
@@ -495,6 +503,10 @@ async function main() {
   serverCfg = serverCfg.replace(
     /(\[\[env\.production\.d1_databases\]\]\n(?:.|\n)*?database_id\s*=\s*")[^"]+"/,
     `$1${d1Id}"`
+  );
+  serverCfg = serverCfg.replace(
+    /(\[\[env\.production\.d1_databases\]\]\n(?:.|\n)*?database_name\s*=\s*")[^"]+"/,
+    `$1${dbName}"`
   );
   serverCfg = serverCfg.replace(
     /(\[\[env\.production\.kv_namespaces\]\]\nbinding\s*=\s*"RATE_LIMIT"\nid\s*=\s*")[^"]+"/,
@@ -530,6 +542,7 @@ async function main() {
   let clientCfg = clientTemplate;
   clientCfg = setTopLevelValue(clientCfg, "name", dashboardName);
   clientCfg = setTopLevelValue(clientCfg, "account_id", accountId);
+  clientCfg = setBindingValue(clientCfg, "DB", "database_name", dbName);
   clientCfg = setBindingValue(clientCfg, "DB", "database_id", d1Id);
   clientCfg = setBindingValue(clientCfg, "RATE_LIMIT_KV", "id", rateKvId);
   clientCfg = addVar(clientCfg, "PUBLIC_APP_URL", dashboardUrl);
