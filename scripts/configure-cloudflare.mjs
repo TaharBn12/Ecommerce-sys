@@ -18,20 +18,26 @@
  *
  * Required env:
  *   CLOUDFLARE_API_TOKEN      — Cloudflare API token with Workers/D1/R2/KV edit
- *   CLOUDFLARE_ACCOUNT_ID     — Cloudflare account id
+ *
+ * Optional env:
+ *   CLOUDFLARE_ACCOUNT_ID     — Cloudflare account id (auto-fetched from the
+ *                               token when omitted)
  *   API_DOMAIN                — e.g. api.example.com (cod-server)
  *   DASHBOARD_DOMAIN          — e.g. dashboard.example.com
  *   STORE_DOMAIN              — e.g. shop.example.com
+ *                               (when NONE of the three domains is set, the
+ *                               script runs in "workers.dev mode": all three
+ *                               workers are published on the account's free
+ *                               *.workers.dev subdomain)
  *   BETTER_AUTH_SECRET        — shared secret (must be the same on server + dashboard)
  *   STORE_API_KEY             — store API key (seeded + used by the storefront)
  *   MCP_LOGIN_TICKET_SECRET   — shared MCP login-ticket secret
  *   ADMIN_EMAIL               — merchant admin email
- *
- * Optional env:
  *   MEDIA_DOMAIN              — e.g. media.example.com (R2 custom domain)
  *   SERVER_WORKER_NAME        — default codflow-server
  *   DASHBOARD_WORKER_NAME     — default codflow-dashboard
- *   STORE_WORKER_NAME         — default codflow-store
+ *   STORE_WORKER_NAME         — default codflow-store (repo theme deploys as
+ *                               codflow-os-theme01 — set it to match!)
  *   COD_DB_NAME               — default codflow-db
  *   COD_R2_BUCKET_NAME        — default codflow-images
  *   D1_DATABASE_ID            — skip create + use this id (UUID)
@@ -41,9 +47,13 @@
  *   R2_SECRET_ACCESS_KEY      — R2 S3 secret key (presigned uploads)
  *   ADMIN_NAME                — default "Admin"
  *   ALLOWED_ORIGINS_EXTRA     — extra comma-separated origins allowed by CORS
+ *
+ * When running inside GitHub Actions, the resolved origins are exported to
+ * GITHUB_ENV (API_ORIGIN, DASHBOARD_ORIGIN, STORE_ORIGIN, DEPLOY_MODE,
+ * CF_ACCOUNT_ID) so later steps can use them.
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -124,6 +134,92 @@ function parseJsonFromOutput(output, label) {
 
 function isCloudflareAuthAvailable() {
   return Boolean((env.CLOUDFLARE_API_TOKEN ?? env.WRANGLER_API_TOKEN ?? "").trim());
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Cloudflare REST API helpers (used for account discovery + workers.dev setup)
+// ────────────────────────────────────────────────────────────────────────────
+
+const CF_API_BASE = "https://api.cloudflare.com/client/v4";
+
+function cfToken() {
+  return (env.CLOUDFLARE_API_TOKEN ?? env.WRANGLER_API_TOKEN ?? "").trim();
+}
+
+async function cfApi(method, apiPath, body) {
+  let res;
+  try {
+    res = await fetch(`${CF_API_BASE}${apiPath}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${cfToken()}`,
+        "Content-Type": "application/json",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new Error(
+      `CF API ${method} ${apiPath} network error: ${err?.cause?.code ?? err.message}`
+    );
+  }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.success === false) {
+    const details = (json.errors ?? [])
+      .map((e) => `${e.code ?? ""}: ${e.message ?? ""}`.trim())
+      .join("; ");
+    throw new Error(`CF API ${method} ${apiPath} failed: ${details || res.statusText}`);
+  }
+  return json.result;
+}
+
+async function fetchAccountId() {
+  const accounts = await cfApi("GET", "/accounts");
+  if (!Array.isArray(accounts) || accounts.length === 0) {
+    fail("The token is valid but no Cloudflare accounts are visible to it.");
+  }
+  if (accounts.length > 1) {
+    console.warn(
+      `[account] Token can see ${accounts.length} accounts; using the first: ${accounts[0].name}`
+    );
+  }
+  return { id: accounts[0].id, name: accounts[0].name ?? "account" };
+}
+
+function slugifyWorkersDevSubdomain(value) {
+  const slug = (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24);
+  return slug || "codflow";
+}
+
+async function ensureWorkersDevSubdomain(accountId, accountName) {
+  try {
+    const existing = await cfApi("GET", `/accounts/${accountId}/workers/subdomain`);
+    if (existing?.subdomain) return existing.subdomain;
+  } catch {
+    // Fall through to registration.
+  }
+  const base = slugifyWorkersDevSubdomain(accountName);
+  const candidates = [
+    base,
+    `${base}-${Math.random().toString(16).slice(2, 6)}`,
+    `${base}-${Math.random().toString(16).slice(2, 8)}`,
+  ];
+  for (const candidate of candidates) {
+    try {
+      const created = await cfApi(
+        "PUT",
+        `/accounts/${accountId}/workers/subdomain`,
+        { subdomain: candidate }
+      );
+      if (created?.subdomain) return created.subdomain;
+    } catch (err) {
+      console.warn(`[workers.dev] Subdomain "${candidate}" unavailable (${err.message}).`);
+    }
+  }
+  fail("Could not register a workers.dev subdomain for this account.");
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -287,30 +383,65 @@ function defaultDomainFrom(host, workerName) {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-function main() {
-  const accountId = requireValue("CLOUDFLARE_ACCOUNT_ID");
+async function main() {
+  let accountId = (env.CLOUDFLARE_ACCOUNT_ID ?? "").trim();
+  let accountName = "";
+  if (!accountId) {
+    if (!isCloudflareAuthAvailable()) {
+      fail("CLOUDFLARE_API_TOKEN (or CLOUDFLARE_ACCOUNT_ID) is required.");
+    }
+    const account = await fetchAccountId();
+    accountId = account.id;
+    accountName = account.name;
+  }
 
   const apiDomain = normalizeDomain(env.API_DOMAIN);
   const dashboardDomain = normalizeDomain(env.DASHBOARD_DOMAIN);
   const storeDomain = normalizeDomain(env.STORE_DOMAIN);
-  const mediaDomain = normalizeDomain(env.MEDIA_DOMAIN || `media.${apiDomain}`);
 
-  if (mailDanger(apiDomain, dashboardDomain, storeDomain)) {
+  const domainCount = [apiDomain, dashboardDomain, storeDomain].filter(Boolean).length;
+  if (domainCount > 0 && domainCount < 3) {
     fail(
-      "Please set API_DOMAIN, DASHBOARD_DOMAIN and STORE_DOMAIN to your custom domains (e.g. api.example.com, dashboard.example.com, shop.example.com)."
+      "Set ALL of API_DOMAIN, DASHBOARD_DOMAIN and STORE_DOMAIN — or set none of them to deploy on the account's free *.workers.dev subdomain."
     );
   }
+  const deployMode = domainCount === 3 ? "custom" : "workersdev";
 
   const serverName = env.SERVER_WORKER_NAME || "codflow-server";
   const dashboardName = env.DASHBOARD_WORKER_NAME || "codflow-dashboard";
   const storeName = env.STORE_WORKER_NAME || "codflow-store";
 
+  let workersDevSubdomain = "";
+  if (deployMode === "workersdev") {
+    if (!isCloudflareAuthAvailable()) {
+      fail("workers.dev mode requires CLOUDFLARE_API_TOKEN to register the account subdomain.");
+    }
+    if (!accountName) {
+      const account = await fetchAccountId();
+      accountName = account.name;
+    }
+    workersDevSubdomain = await ensureWorkersDevSubdomain(accountId, accountName);
+    console.log(`[workers.dev] Using ${workersDevSubdomain}.workers.dev`);
+  }
+
   const dbName = env.COD_DB_NAME || "codflow-db";
   const bucketName = ensureR2Bucket(env.COD_R2_BUCKET_NAME || "codflow-images");
 
-  const apiUrl = asOrigin(apiDomain);
-  const dashboardUrl = asOrigin(dashboardDomain);
-  const storeUrl = asOrigin(storeDomain);
+  const apiUrl =
+    deployMode === "custom"
+      ? asOrigin(apiDomain)
+      : `https://${serverName}.${workersDevSubdomain}.workers.dev`;
+  const dashboardUrl =
+    deployMode === "custom"
+      ? asOrigin(dashboardDomain)
+      : `https://${dashboardName}.${workersDevSubdomain}.workers.dev`;
+  const storeUrl =
+    deployMode === "custom"
+      ? asOrigin(storeDomain)
+      : `https://${storeName}.${workersDevSubdomain}.workers.dev`;
+  const mediaDomain = normalizeDomain(
+    env.MEDIA_DOMAIN || (deployMode === "custom" ? `media.${apiDomain}` : "")
+  );
 
   const betterAuthSecret = requireValue("BETTER_AUTH_SECRET");
   const storeApiKey = requireValue("STORE_API_KEY");
@@ -426,8 +557,26 @@ function main() {
   // ── Storefront runtime secret setup doesn't live in files; the workflow
   //    sets STORE_API_KEY / MEDIA_DOMAIN via `wrangler secret put`.
 
-  console.log(`\n✔ Cloudflare config generated.
+  // ── GitHub Actions exports ─────────────────────────────────────────────────
+  // Later workflow steps need the resolved origins (routes, --var, summary).
+  if (env.GITHUB_ENV) {
+    appendFileSync(
+      env.GITHUB_ENV,
+      [
+        `API_ORIGIN=${apiUrl}`,
+        `DASHBOARD_ORIGIN=${dashboardUrl}`,
+        `STORE_ORIGIN=${storeUrl}`,
+        `DEPLOY_MODE=${deployMode}`,
+        `CF_ACCOUNT_ID=${accountId}`,
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+  }
+
+  console.log(`\n✔ Cloudflare config generated (${deployMode} mode).
   Account      : ${accountId}
+  Mode         : ${deployMode}
   Worker API   : ${serverName} → ${apiUrl} (D1: ${d1Id})
   Dashboard    : ${dashboardName} → ${dashboardUrl}
   Store        : ${storeName} → ${storeUrl}
@@ -435,7 +584,7 @@ function main() {
   R2 bucket    : ${bucketName}
   KV RATE_LIMIT: ${rateKvId}
   KV OAUTH     : ${oauthKvId}
-  Media domain : ${mediaDomain}
+  Media domain : ${mediaDomain || "(none — R2 passthrough)"}
 
 Now run the deploy steps (workflow does this automatically):
   1. cd cod-server && npm run db:migrate:remote && STORE_API_KEY=... npm run db:seed:remote
@@ -447,13 +596,10 @@ Now run the deploy steps (workflow does this automatically):
   return { d1Id, rateKvId, oauthKvId, apiUrl, dashboardUrl, storeUrl };
 }
 
-// Guard against a missing custom-domain setup.
-function mailDanger(...domains) {
-  return domains.some((d) => !d);
-}
-
 try {
-  main();
+  main().catch((err) =>
+    fail(err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err))
+  );
 } catch (err) {
   fail(err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err));
 }
