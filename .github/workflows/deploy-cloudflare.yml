@@ -111,6 +111,7 @@ jobs:
         run: npx wrangler whoami
 
       - name: Apply remote migrations and seed data
+        id: migrate
         working-directory: cod-server
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -152,6 +153,7 @@ jobs:
           npm run db:seed:remote 2>&1 | tee /tmp/seed.log || { tail -c 4000 /tmp/seed.log > /tmp/step-error.log; exit 1; }
 
       - name: Seed merchant admin account
+        id: seedadmin
         working-directory: cod-client-astro
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -162,6 +164,11 @@ jobs:
           grep -aE "Email|Password|API Key" /tmp/seed-admin.log > /tmp/admin-creds.txt || true
           USERS=$( ( cd ../cod-server && npx wrangler d1 execute codflow-db --remote --command "SELECT COUNT(*) AS n FROM users" --json 2>&1 | tr -d '\n' | grep -oE '"n": *[0-9]+' | head -1 ) )
           echo "::notice::[admin-seed] ${USERS:-users query failed} log_tail=$(tail -c 220 /tmp/seed-admin.log | tr '\n' ' ' | tr -d '%')
+
+      - name: Which step failed
+        if: failure()
+        run: |
+          echo "::notice::[diag] migrate=${{ steps.migrate.outcome }} seedadmin=${{ steps.seedadmin.outcome }} secrets_server=${{ steps.secrets_server.outcome }} deploy_server=${{ steps.deploy_server.outcome }} secrets_dash=${{ steps.secrets_dash.outcome }} deploy_dash=${{ steps.deploy_dash.outcome }} secrets_store=${{ steps.secrets_store.outcome }} deploy_store=${{ steps.deploy_store.outcome }} enable_wd=${{ steps.enable_wd.outcome }} smoke=${{ steps.smoke.outcome }} publish=${{ steps.publish_info.outcome }}"
 
       - name: Report failure
         if: failure()
@@ -213,6 +220,7 @@ jobs:
           exit 1
 
       - name: Set server secrets
+        id: secrets_server
         working-directory: cod-server
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -233,6 +241,7 @@ jobs:
           fi
 
       - name: Deploy cod-server
+        id: deploy_server
         working-directory: cod-server
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -245,6 +254,7 @@ jobs:
           fi
 
       - name: Set dashboard secrets
+        id: secrets_dash
         working-directory: cod-client-astro
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -255,6 +265,7 @@ jobs:
           printf '%s' "$MCP_LOGIN_TICKET_SECRET" | npx wrangler secret put MCP_LOGIN_TICKET_SECRET
 
       - name: Deploy cod-client-astro (dashboard)
+        id: deploy_dash
         working-directory: cod-client-astro
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -268,6 +279,7 @@ jobs:
           fi
 
       - name: Set storefront secrets
+        id: secrets_store
         working-directory: cod-astro/theme01
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -280,6 +292,7 @@ jobs:
           fi
 
       - name: Deploy storefront
+        id: deploy_store
         working-directory: cod-astro/theme01
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -297,6 +310,7 @@ jobs:
       # custom domains). Fresh accounts may have the per-worker workers.dev
       # toggle off until the first UI visit.
       - name: Enable workers.dev routes
+        id: enable_wd
         if: env.DEPLOY_MODE == 'workersdev'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -312,6 +326,7 @@ jobs:
           done
 
       - name: Smoke test
+        id: smoke
         continue-on-error: true
         env:
           STORE_API_KEY: ${{ env.STORE_API_KEY }}
@@ -334,6 +349,7 @@ jobs:
       # Annotations are the only run output readable from the agent sandbox —
       # publish the URLs + admin credentials + smoke results there too.
       - name: Publish deployment info
+        id: publish_info
         if: always()
         working-directory: cod-server
         env:
