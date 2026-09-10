@@ -332,16 +332,23 @@ jobs:
       # publish the URLs + admin credentials + smoke results there too.
       - name: Publish deployment info
         if: always()
+        working-directory: cod-server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CF_ACCOUNT_ID }}
         run: |
+          COUNTS=$(npx wrangler d1 execute codflow-db --remote --command "SELECT (SELECT COUNT(*) FROM products) AS products, (SELECT COUNT(*) FROM products WHERE status='ACTIVE' AND show_in_store=1 AND visibility=1 AND deleted_at IS NULL) AS visible_products, (SELECT COUNT(*) FROM stores) AS stores, (SELECT COUNT(*) FROM store_api_keys) AS store_keys, (SELECT COUNT(*) FROM users) AS users" --json 2>&1 | jq -c '.[0].results[0]' 2>/dev/null | tail -c 400 || true)
           {
-            echo "URLS: MODE=$DEPLOY_MODE API=$API_ORIGIN DASHBOARD=$DASHBOARD_ORIGIN STORE=$STORE_ORIGIN"
+            echo "COUNTS: $COUNTS"
+            echo "URLS: MODE=$DEPLOY_MODE API=$API_ORIGIN DASH=$DASHBOARD_ORIGIN STORE=$STORE_ORIGIN"
             echo "ADMIN: $(tr '\n' ' ' < /tmp/admin-creds.txt 2>/dev/null)"
             echo "SMOKE: $(tr '\n' '|' < /tmp/smoke.txt 2>/dev/null)"
           } > /tmp/deploy-info.txt
-          tail -c 1800 /tmp/deploy-info.txt | tr '\r\n' '  ' | fold -w 210 | head -8 | while IFS= read -r chunk; do
-            chunk=${chunk//%/%25}
-            echo "::notice::[deploy-info] $chunk"
-          done
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            line=${line//%/%25}
+            echo "::notice::[deploy-info] $line"
+          done < /tmp/deploy-info.txt
 
       - name: Summary
         run: |
