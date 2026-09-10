@@ -157,6 +157,7 @@ jobs:
           ADMIN_NAME: ${{ env.ADMIN_NAME }}
         run: |
           npm run seed:admin:remote 2>&1 | tee /tmp/seed-admin.log || { tail -c 4000 /tmp/seed-admin.log > /tmp/step-error.log; exit 1; }
+          grep -aE "Email|Password|API Key" /tmp/seed-admin.log > /tmp/admin-creds.txt || true
 
       - name: Report failure
         if: failure()
@@ -318,12 +319,27 @@ jobs:
             code=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$@")
             echo "- $label → HTTP $code (${url})"
           }
-          echo "### Smoke results" | tee smoke.txt
+          echo "### Smoke results" | tee /tmp/smoke.txt
           check "API /health"        "$API_ORIGIN/health"        "$API_ORIGIN/health"
           check "Store /store/config" "$API_ORIGIN/store/config" -H "X-Store-API-Key: $STORE_API_KEY" "$API_ORIGIN/store/config"
           check "Dashboard"          "$DASHBOARD_ORIGIN"          "$DASHBOARD_ORIGIN/"
           check "Storefront"         "$STORE_ORIGIN"              "$STORE_ORIGIN/"
-          cat smoke.txt >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/smoke.txt >> "$GITHUB_STEP_SUMMARY"
+
+      # Annotations are the only run output readable from the agent sandbox —
+      # publish the URLs + admin credentials + smoke results there too.
+      - name: Publish deployment info
+        if: always()
+        run: |
+          {
+            echo "URLS: MODE=$DEPLOY_MODE API=$API_ORIGIN DASHBOARD=$DASHBOARD_ORIGIN STORE=$STORE_ORIGIN"
+            echo "ADMIN: $(tr '\n' ' ' < /tmp/admin-creds.txt 2>/dev/null)"
+            echo "SMOKE: $(tr '\n' '|' < /tmp/smoke.txt 2>/dev/null)"
+          } > /tmp/deploy-info.txt
+          tail -c 1800 /tmp/deploy-info.txt | tr '\r\n' '  ' | fold -w 210 | head -8 | while IFS= read -r chunk; do
+            chunk=${chunk//%/%25}
+            echo "::notice::[deploy-info] $chunk"
+          done
 
       - name: Summary
         run: |
