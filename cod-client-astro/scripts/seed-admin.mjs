@@ -114,14 +114,22 @@ WHERE user_id = (SELECT id FROM users WHERE email = '${email}') AND provider_id 
   try {
     console.log("\n=== Seeding admin (local) ===");
     run(`npx wrangler d1 execute ${dbName} --local --persist-to ../.wrangler-shared --file "${tmpFile}"`);
-
-    if (remote) {
-      console.log("\n=== Seeding admin (remote) ===");
-      run(`npx wrangler d1 execute ${dbName} --remote --file "${tmpFile}"`);
-    }
-  } finally {
-    unlinkSync(tmpFile);
+  } catch (localErr) {
+    // The local DB is a dev convenience. In CI (or any machine without a
+    // migrated local database) it has no tables — never let it block the
+    // remote seed below.
+    console.log(
+      "[seed-admin] local seed skipped (local database not migrated — expected in CI):",
+      localErr.message?.split("\n")[0] ?? localErr
+    );
   }
+
+  if (remote) {
+    console.log("\n=== Seeding admin (remote) ===");
+    run(`npx wrangler d1 execute ${dbName} --remote --file "${tmpFile}"`);
+  }
+
+  unlinkSync(tmpFile);
 
   console.log("\n╔══════════════════════════════════════════════════════════╗");
   console.log("║                 Admin user seeded                       ║");
