@@ -133,13 +133,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo "### ❌ Deploy failed at run [$GITHUB_RUN_ID](${{ github.server_url }}/${{ github.repository }}/actions/runs/$GITHUB_RUN_ID)"
-            echo ""
-            echo '```'
-            tail -c 3500 /tmp/step-error.log 2>/dev/null || echo "(no step log captured — check the run page)"
-            echo '```'
+            echo "### ❌ Deploy failed — run $GITHUB_RUN_ID"
+            for f in /tmp/migrate.log /tmp/seed.log /tmp/seed-admin.log; do
+              if [ -f "$f" ]; then
+                echo ""
+                echo "**tail of \`$f\`**"
+                echo '```'
+                tail -n 40 "$f"
+                echo '```'
+              fi
+            done
           } > /tmp/failure-body.md
-          gh api "repos/${{ github.repository }}/issues/1/comments" -F body=@/tmp/failure-body.md || true
+          gh api "repos/${{ github.repository }}/issues/1/comments" -F body=@/tmp/failure-body.md \
+            && echo "failure comment posted to issue 1" \
+            || echo "::error::failed to post failure comment to issue 1"
+          # Emit the tail as error annotations (survive log-download blocks).
+          tail -c 1800 /tmp/failure-body.md | tr '\r\n' '  ' | fold -w 210 | head -8 | while IFS= read -r chunk; do
+            chunk=${chunk//%/%25}
+            echo "::error::[tail] $chunk"
+          done
+          exit 1
 
       - name: Set server secrets
         working-directory: cod-server
