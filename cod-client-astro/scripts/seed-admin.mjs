@@ -100,7 +100,12 @@ WHERE  u.email = '${email}'
 
 UPDATE accounts SET password = '${hashedPw}', issuer = 'local:credential', account_id = user_id, updated_at = ${now}
 WHERE user_id = (SELECT id FROM users WHERE email = '${email}') AND provider_id = 'credential';
-`.trim();
+`
+  .trim()
+  // wrangler d1 execute --file splits statements on this exact marker (same
+  // convention as the Drizzle migrations in src/db/migrations). Plain ';'
+  // separators are sent as ONE statement and remote D1 silently no-ops them.
+  .replace(/;\n/g, ";\n--> statement-breakpoint\n");
 
   // Write SQL to a temp file (wrangler --file is more reliable than --command for multi-line)
   const tmpFile = join(tmpdir(), `seed-admin-${Date.now()}.sql`);
