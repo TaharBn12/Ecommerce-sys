@@ -113,6 +113,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           STORE_API_KEY: ${{ env.STORE_API_KEY }}
+          # Needed when the configure script is re-run during dirty-state recovery.
+          STORE_WORKER_NAME: codflow-os-theme01
+          ADMIN_EMAIL: ${{ env.ADMIN_EMAIL }}
+          ADMIN_NAME: ${{ env.ADMIN_NAME }}
+          BETTER_AUTH_SECRET: ${{ env.BETTER_AUTH_SECRET }}
+          MCP_LOGIN_TICKET_SECRET: ${{ env.MCP_LOGIN_TICKET_SECRET }}
         run: |
           set -o pipefail
           rm -f /tmp/migrate-all.log
@@ -126,6 +132,17 @@ jobs:
               break
             fi
             echo "::endgroup::"
+            # Self-heal: a partially-committed migration batch (D1 executes
+            # multi-statement files non-atomically) leaves tables behind with
+            # an empty d1_migrations journal. Recreating the database is the
+            # only clean recovery — do it once, automatically.
+            if [ "$attempt" = "1" ] && grep -aq "already exists" /tmp/migrate-all.log; then
+              echo "::warning::Dirty D1 state detected (tables without journal) — recreating database"
+              npx wrangler d1 delete codflow-db --skip-confirmation || true
+              ( cd .. && node scripts/configure-cloudflare.mjs ) || { echo "::error::re-configure after D1 reset failed"; exit 1; }
+              sleep 5
+              continue
+            fi
             echo "Migrations attempt $attempt failed."
             sleep 5
           done
