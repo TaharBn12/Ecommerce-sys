@@ -162,8 +162,8 @@ jobs:
         run: |
           npm run seed:admin:remote -- "$ADMIN_PASSWORD" 2>&1 | tee /tmp/seed-admin.log || { tail -c 4000 /tmp/seed-admin.log > /tmp/step-error.log; exit 1; }
           grep -aE "Email|Password|API Key" /tmp/seed-admin.log > /tmp/admin-creds.txt || true
-          USERS=$( ( cd ../cod-server && npx wrangler d1 execute codflow-db --remote --command "SELECT COUNT(*) AS n FROM users" --json 2>&1 | tr -d '\n' | grep -oE '"n": *[0-9]+' | head -1 ) )
-          echo "::notice::[admin-seed] ${USERS:-users query failed} log_tail=$(tail -c 220 /tmp/seed-admin.log | tr '\n' ' ' | tr -d '%')
+          USERS=$(( cd ../cod-server && npx wrangler d1 execute codflow-db --remote --command "SELECT COUNT(*) AS n FROM users" --json 2>&1 | tr -d '\n' | grep -oE '"n": *[0-9]+' | head -1 ) ) || true
+          echo "::notice::[admin-seed] users=${USERS:-unknown} log_tail=$(tail -c 220 /tmp/seed-admin.log | tr '\n' ' ' | tr -d '%')
 
       - name: Which step failed
         if: failure()
