@@ -1,0 +1,248 @@
+name: Deploy CodFlow to Cloudflare
+
+# Deploys all three workers (API, dashboard, storefront) plus D1/R2/KV.
+#
+# MINIMUM REQUIRED SECRET: CLOUDFLARE_API_TOKEN (Edit Workers + D1 + R2 + KV).
+# Everything else is optional:
+#   - CLOUDFLARE_ACCOUNT_ID is fetched from the token when omitted.
+#   - Without API_DOMAIN/DASHBOARD_DOMAIN/STORE_DOMAIN the workers are
+#     published on the account's free *.workers.dev subdomain.
+#   - BETTER_AUTH_SECRET / STORE_API_KEY / MCP_LOGIN_TICKET_SECRET are derived
+#     deterministically from the API token (HMAC-SHA256) when omitted, so
+#     re-runs stay consistent. Provide them explicitly for production.
+#   - ADMIN_EMAIL defaults to admin@example.com.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-cloudflare:
+    name: Deploy to Cloudflare Workers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare deployment values
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          STORE_API_KEY: ${{ secrets.STORE_API_KEY }}
+          MCP_LOGIN_TICKET_SECRET: ${{ secrets.MCP_LOGIN_TICKET_SECRET }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_NAME: ${{ secrets.ADMIN_NAME }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::The CLOUDFLARE_API_TOKEN repository secret is required (Workers + D1 + R2 + KV edit permissions)."
+            exit 1
+          fi
+          # Stable child secrets derived from the token (HMAC-SHA256) so that
+          # re-runs keep the same values unless the token is rotated.
+          derive() { printf '%s' "$2" | openssl dgst -sha256 -hmac "$CLOUDFLARE_API_TOKEN" -hex | awk '{print $NF}'; }
+          {
+            echo "BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-$(derive codflow/better-auth:v1)}"
+            echo "STORE_API_KEY=${STORE_API_KEY:-$(derive codflow/store-api-key:v1)}"
+            echo "MCP_LOGIN_TICKET_SECRET=${MCP_LOGIN_TICKET_SECRET:-$(derive codflow/mcp-ticket:v1)}"
+            echo "ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}"
+            echo "ADMIN_NAME=${ADMIN_NAME:-Admin}"
+          } >> "$GITHUB_ENV"
+
+      - name: Generate Cloudflare config
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          API_DOMAIN: ${{ secrets.API_DOMAIN }}
+          DASHBOARD_DOMAIN: ${{ secrets.DASHBOARD_DOMAIN }}
+          STORE_DOMAIN: ${{ secrets.STORE_DOMAIN }}
+          BETTER_AUTH_SECRET: ${{ env.BETTER_AUTH_SECRET }}
+          STORE_API_KEY: ${{ env.STORE_API_KEY }}
+          MCP_LOGIN_TICKET_SECRET: ${{ env.MCP_LOGIN_TICKET_SECRET }}
+          ADMIN_EMAIL: ${{ env.ADMIN_EMAIL }}
+          # Optional
+          MEDIA_DOMAIN: ${{ secrets.MEDIA_DOMAIN }}
+          ADMIN_NAME: ${{ env.ADMIN_NAME }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          RATE_LIMIT_KV_ID: ${{ secrets.RATE_LIMIT_KV_ID }}
+          OAUTH_KV_ID: ${{ secrets.OAUTH_KV_ID }}
+          # The theme worker deploys under this name (cod-astro/theme01/wrangler.jsonc).
+          STORE_WORKER_NAME: codflow-os-theme01
+          COD_DB_NAME: ${{ vars.COD_DB_NAME }}
+          COD_R2_BUCKET_NAME: ${{ vars.COD_R2_BUCKET_NAME }}
+        run: node scripts/configure-cloudflare.mjs
+
+      - name: Authenticate with Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler whoami
+
+      - name: Apply remote migrations and seed data
+        working-directory: cod-server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STORE_API_KEY: ${{ env.STORE_API_KEY }}
+        run: |
+          npm run db:migrate:remote
+          npm run db:seed:remote
+
+      - name: Seed merchant admin account
+        working-directory: cod-client-astro
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ADMIN_EMAIL: ${{ env.ADMIN_EMAIL }}
+          ADMIN_NAME: ${{ env.ADMIN_NAME }}
+        run: npm run seed:admin:remote
+
+      - name: Set server secrets
+        working-directory: cod-server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ env.BETTER_AUTH_SECRET }}
+          STORE_API_KEY: ${{ env.STORE_API_KEY }}
+          MCP_LOGIN_TICKET_SECRET: ${{ env.MCP_LOGIN_TICKET_SECRET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CF_ACCOUNT_ID }}
+        run: |
+          printf '%s' "$BETTER_AUTH_SECRET" | npx wrangler secret put BETTER_AUTH_SECRET
+          printf '%s' "$STORE_API_KEY" | npx wrangler secret put STORE_API_KEY
+          printf '%s' "$MCP_LOGIN_TICKET_SECRET" | npx wrangler secret put MCP_LOGIN_TICKET_SECRET
+          if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ]; then
+            printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | npx wrangler secret put CF_ACCOUNT_ID
+            printf '%s' "$R2_ACCESS_KEY_ID" | npx wrangler secret put R2_ACCESS_KEY_ID
+            printf '%s' "$R2_SECRET_ACCESS_KEY" | npx wrangler secret put R2_SECRET_ACCESS_KEY
+          fi
+
+      - name: Deploy cod-server
+        working-directory: cod-server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          API_DOMAIN: ${{ secrets.API_DOMAIN }}
+        run: |
+          if [ -n "$API_DOMAIN" ]; then
+            npx wrangler deploy --route "$API_DOMAIN"
+          else
+            npx wrangler deploy
+          fi
+
+      - name: Set dashboard secrets
+        working-directory: cod-client-astro
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ env.BETTER_AUTH_SECRET }}
+          MCP_LOGIN_TICKET_SECRET: ${{ env.MCP_LOGIN_TICKET_SECRET }}
+        run: |
+          printf '%s' "$BETTER_AUTH_SECRET" | npx wrangler secret put BETTER_AUTH_SECRET
+          printf '%s' "$MCP_LOGIN_TICKET_SECRET" | npx wrangler secret put MCP_LOGIN_TICKET_SECRET
+
+      - name: Deploy cod-client-astro (dashboard)
+        working-directory: cod-client-astro
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DASHBOARD_DOMAIN: ${{ secrets.DASHBOARD_DOMAIN }}
+        run: |
+          npm run build
+          if [ -n "$DASHBOARD_DOMAIN" ]; then
+            npx wrangler deploy --route "$DASHBOARD_DOMAIN"
+          else
+            npx wrangler deploy
+          fi
+
+      - name: Set storefront secrets
+        working-directory: cod-astro/theme01
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STORE_API_KEY: ${{ env.STORE_API_KEY }}
+          MEDIA_DOMAIN: ${{ secrets.MEDIA_DOMAIN }}
+        run: |
+          printf '%s' "$STORE_API_KEY" | npx wrangler secret put STORE_API_KEY
+          if [ -n "$MEDIA_DOMAIN" ]; then
+            printf '%s' "$MEDIA_DOMAIN" | npx wrangler secret put MEDIA_DOMAIN
+          fi
+
+      - name: Deploy storefront
+        working-directory: cod-astro/theme01
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STORE_DOMAIN: ${{ secrets.STORE_DOMAIN }}
+          COD_SERVER_URL: ${{ env.API_ORIGIN }}
+        run: |
+          npm run build
+          if [ -n "$STORE_DOMAIN" ]; then
+            npx wrangler deploy --var "COD_SERVER_URL:$COD_SERVER_URL" --route "$STORE_DOMAIN"
+          else
+            npx wrangler deploy --var "COD_SERVER_URL:$COD_SERVER_URL"
+          fi
+
+      # Only needed in workers.dev mode (wrangler routes mode already binds
+      # custom domains). Fresh accounts may have the per-worker workers.dev
+      # toggle off until the first UI visit.
+      - name: Enable workers.dev routes
+        if: env.DEPLOY_MODE == 'workersdev'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          for worker in codflow-server codflow-dashboard codflow-os-theme01; do
+            echo "Enabling workers.dev for ${worker}..."
+            curl -sS -X PATCH \
+              "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/$worker/subdomain" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data '{"enabled":true}' | head -c 300
+            echo ""
+          done
+
+      - name: Smoke test
+        continue-on-error: true
+        env:
+          STORE_API_KEY: ${{ env.STORE_API_KEY }}
+        run: |
+          sleep 20
+          check() {
+            local label="$1" url="$2"; shift 2
+            local code
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$@")
+            echo "- $label → HTTP $code (${url})"
+          }
+          echo "### Smoke results" | tee smoke.txt
+          check "API /health"        "$API_ORIGIN/health"        "$API_ORIGIN/health"
+          check "Store /store/config" "$API_ORIGIN/store/config" -H "X-Store-API-Key: $STORE_API_KEY" "$API_ORIGIN/store/config"
+          check "Dashboard"          "$DASHBOARD_ORIGIN"          "$DASHBOARD_ORIGIN/"
+          check "Storefront"         "$STORE_ORIGIN"              "$STORE_ORIGIN/"
+          cat smoke.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Deploy finished ($DEPLOY_MODE mode)"
+            echo ""
+            echo "- API:        $API_ORIGIN"
+            echo "- Dashboard:  $DASHBOARD_ORIGIN"
+            echo "- Storefront: $STORE_ORIGIN"
+            echo "- Admin login: $ADMIN_EMAIL"
+            echo ""
+            echo "Admin password was printed once in the **Seed merchant admin account** step logs."
+            if [ "$DEPLOY_MODE" = "workersdev" ]; then
+              echo ""
+              echo "> workers.dev mode: first DNS resolution may take ~1 minute."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
