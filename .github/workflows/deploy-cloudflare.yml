@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: cloudflare-deploy-${{ github.ref }}
@@ -101,8 +102,21 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           STORE_API_KEY: ${{ env.STORE_API_KEY }}
         run: |
-          npm run db:migrate:remote
-          npm run db:seed:remote
+          set -o pipefail
+          ok=0
+          for attempt in 1 2 3; do
+            echo "::group::db:migrate:remote (attempt $attempt)"
+            if npm run db:migrate:remote 2>&1 | tee /tmp/migrate.log; then
+              echo "::endgroup::"
+              ok=1
+              break
+            fi
+            echo "::endgroup::"
+            echo "Migrations attempt $attempt failed — retrying in 15s (fresh D1 replication lag)..."
+            sleep 15
+          done
+          [ "$ok" = "1" ] || { tail -c 4000 /tmp/migrate.log > /tmp/step-error.log; exit 1; }
+          npm run db:seed:remote 2>&1 | tee /tmp/seed.log || { tail -c 4000 /tmp/seed.log > /tmp/step-error.log; exit 1; }
 
       - name: Seed merchant admin account
         working-directory: cod-client-astro
@@ -110,7 +124,22 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           ADMIN_EMAIL: ${{ env.ADMIN_EMAIL }}
           ADMIN_NAME: ${{ env.ADMIN_NAME }}
-        run: npm run seed:admin:remote
+        run: |
+          npm run seed:admin:remote 2>&1 | tee /tmp/seed-admin.log || { tail -c 4000 /tmp/seed-admin.log > /tmp/step-error.log; exit 1; }
+
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### ❌ Deploy failed at run [$GITHUB_RUN_ID](${{ github.server_url }}/${{ github.repository }}/actions/runs/$GITHUB_RUN_ID)"
+            echo ""
+            echo '```'
+            tail -c 3500 /tmp/step-error.log 2>/dev/null || echo "(no step log captured — check the run page)"
+            echo '```'
+          } > /tmp/failure-body.md
+          gh api "repos/${{ github.repository }}/issues/1/comments" -F body=@/tmp/failure-body.md || true
 
       - name: Set server secrets
         working-directory: cod-server
