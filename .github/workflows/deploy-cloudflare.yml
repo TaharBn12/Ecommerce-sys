@@ -160,7 +160,12 @@ jobs:
           ADMIN_EMAIL: ${{ env.ADMIN_EMAIL }}
           ADMIN_NAME: ${{ env.ADMIN_NAME }}
         run: |
-          npm run seed:admin:remote -- "$ADMIN_PASSWORD" 2>&1 | tee /tmp/seed-admin.log || { tail -c 4000 /tmp/seed-admin.log > /tmp/step-error.log; exit 1; }
+          npm run seed:admin:remote -- "$ADMIN_PASSWORD" 2>&1 | tee /tmp/seed-admin.log || {
+            tail -c 4000 /tmp/seed-admin.log > /tmp/step-error.log
+            printf '::notice::[seed-admin-fail] %s\n' "$(tail -c 400 /tmp/seed-admin.log | tr '\n' ' ' | tr -d '%')"
+            exit 1
+          }
+          printf '::notice::[seed-admin-ok] %s\n' "$(tail -c 300 /tmp/seed-admin.log | tr '\n' ' ' | tr -d '%')"
           grep -aE "Email|Password|API Key" /tmp/seed-admin.log > /tmp/admin-creds.txt || true
           USERS=$(( cd ../cod-server && npx wrangler d1 execute codflow-db --remote --command "SELECT COUNT(*) AS n FROM users" --json 2>&1 | tr -d '\n' | grep -oE '"n": *[0-9]+' | head -1 ) ) || true
           echo "::notice::[admin-seed] users=${USERS:-unknown} log_tail=$(tail -c 220 /tmp/seed-admin.log | tr '\n' ' ' | tr -d '%')
@@ -211,7 +216,7 @@ jobs:
             echo "TABLES: $DIAG"
             echo "MIGR: $DIAG2"
             echo "ERRORS:"
-            grep -aE "✘|ERROR|Error:|already exists|failed" /tmp/migrate.log 2>/dev/null | head -8
+            grep -ahE "✘|ERROR|Error:|already exists|failed|ELIFECYCLE" /tmp/migrate.log /tmp/seed-admin.log 2>/dev/null | head -8
           } > /tmp/fail-ann.txt
           tail -c 1800 /tmp/fail-ann.txt | tr '\r\n' '  ' | fold -w 210 | head -8 | while IFS= read -r chunk; do
             chunk=${chunk//%/%25}
