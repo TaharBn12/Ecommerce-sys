@@ -56,6 +56,7 @@ jobs:
           MCP_LOGIN_TICKET_SECRET: ${{ secrets.MCP_LOGIN_TICKET_SECRET }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_NAME: ${{ secrets.ADMIN_NAME }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
           set -euo pipefail
           if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
@@ -71,6 +72,7 @@ jobs:
             echo "MCP_LOGIN_TICKET_SECRET=${MCP_LOGIN_TICKET_SECRET:-$(derive codflow/mcp-ticket:v1)}"
             echo "ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}"
             echo "ADMIN_NAME=${ADMIN_NAME:-Admin}"
+            echo "ADMIN_PASSWORD=${ADMIN_PASSWORD:-$(derive codflow/admin-password:v1)}"
           } >> "$GITHUB_ENV"
 
       - name: Reset D1 database (manual trigger only)
@@ -156,7 +158,7 @@ jobs:
           ADMIN_EMAIL: ${{ env.ADMIN_EMAIL }}
           ADMIN_NAME: ${{ env.ADMIN_NAME }}
         run: |
-          npm run seed:admin:remote 2>&1 | tee /tmp/seed-admin.log || { tail -c 4000 /tmp/seed-admin.log > /tmp/step-error.log; exit 1; }
+          npm run seed:admin:remote -- "$ADMIN_PASSWORD" 2>&1 | tee /tmp/seed-admin.log || { tail -c 4000 /tmp/seed-admin.log > /tmp/step-error.log; exit 1; }
           grep -aE "Email|Password|API Key" /tmp/seed-admin.log > /tmp/admin-creds.txt || true
 
       - name: Report failure
