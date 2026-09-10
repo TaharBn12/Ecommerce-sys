@@ -338,8 +338,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ env.CF_ACCOUNT_ID }}
         run: |
-          COUNTS=$(npx wrangler d1 execute codflow-db --remote --command "SELECT (SELECT COUNT(*) FROM products) AS products, (SELECT COUNT(*) FROM products WHERE status='ACTIVE' AND show_in_store=1 AND visibility=1 AND deleted_at IS NULL) AS visible_products, (SELECT COUNT(*) FROM stores) AS stores, (SELECT COUNT(*) FROM store_api_keys) AS store_keys, (SELECT COUNT(*) FROM users) AS users" --json 2>&1 | tr -d '\n' | grep -oE '"results":\[.*\]' | tail -c 400)
-          COUNTS=${COUNTS:-"(query failed: $(npx wrangler d1 execute codflow-db --remote --command 'SELECT COUNT(*) AS products FROM products' --json 2>&1 | tail -c 220))"}
+          COUNTS=$(npx wrangler d1 execute codflow-db --remote --command "SELECT (SELECT COUNT(*) FROM products) AS products, (SELECT COUNT(*) FROM products WHERE status='ACTIVE' AND show_in_store=1 AND visibility=1 AND deleted_at IS NULL) AS visible_products, (SELECT COUNT(*) FROM stores) AS stores, (SELECT COUNT(*) FROM store_api_keys) AS store_keys, (SELECT COUNT(*) FROM users) AS users" --json 2>&1 | tr -d '\n' | grep -oE '"results": *\[.*\]' | head -c 400)
+          COUNTS=${COUNTS:-"(query failed)"}
           {
             echo "COUNTS: $COUNTS"
             echo "URLS: MODE=$DEPLOY_MODE API=$API_ORIGIN DASH=$DASHBOARD_ORIGIN STORE=$STORE_ORIGIN"
